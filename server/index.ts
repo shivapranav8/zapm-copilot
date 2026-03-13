@@ -86,7 +86,9 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 
 if (isProduction) {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    // Vite is built with base: '/app/', so asset URLs are /app/assets/*.
+    // Mount static at '/app' so /app/assets/xxx.css → dist/assets/xxx.css
+    app.use('/app', express.static(distPath));
     app.use((req, res) => {
         // [ROUTING DEBUG] Explicitly catch leaked API requests
         if (req.originalUrl.startsWith('/api')) {

@@ -153,7 +153,7 @@ Generate structured meeting minutes with the following information:
 1. **Meeting Title**: Infer from the transcript or use "${input.meetingTitle || 'Team Meeting'}"
 2. **Attendees**: List all participants mentioned in the transcript. Only add a role if explicitly stated (e.g., "I'm the PM"). Otherwise just the name. If no names audible, return empty array.
 3. **Summary**: 3-5 sentence overview of what was discussed, decided, and what happens next.${input.visualContext ? ' Incorporate visual information if relevant.' : ''}
-4. **Key Discussions**: All main topics discussed — be thorough, include every distinct topic covered.${input.visualContext ? ' Include information from slides/diagrams if shown.' : ''}
+4. **Key Discussions**: For each topic discussed, write 2-3 full descriptive sentences explaining WHAT was said, WHY it matters, and any context or concerns raised. Do NOT write short labels or titles (e.g., "Live connect feature" is wrong — instead write "The team discussed the live connect feature configuration, noting that the current setup requires manual steps that could be automated. There were concerns about latency in the data sync, and it was suggested to add retry logic before the next release."). Be thorough — cover every distinct topic.${input.visualContext ? ' Include information from slides/diagrams if shown.' : ''}
 5. **Decisions Made**: Clear decisions that were agreed upon. If none, return empty array.
 6. **Action Items**: All tasks assigned or agreed upon.
    - Assignee: use the name if mentioned, otherwise "Unassigned".

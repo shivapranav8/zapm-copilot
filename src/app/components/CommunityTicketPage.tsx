@@ -273,7 +273,7 @@ export function CommunityTicketPage({ onBack, onSubmit, ticketData }: CommunityT
                     headers: { 'Content-Type': 'application/json' },
                     credentials: 'include',
                     body: JSON.stringify({
-                      content: draftContent,
+                      content: generatedAnswer,
                       channel: selectedTicket.channel || 'FORUMS',
                       toEmail: selectedTicket.email,
                       fromEmail: undefined,

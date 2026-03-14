@@ -92,6 +92,9 @@ export default function App() {
 
   // FRD Audit state
   const [showFRDAudit, setShowFRDAudit] = useState(false);
+  const [frdAuditLoading, setFrdAuditLoading] = useState(false);
+  const [frdAuditProgress, setFrdAuditProgress] = useState(0);
+  const [frdAuditMessage, setFrdAuditMessage] = useState('');
   const [auditData, setAuditData] = useState<AuditData | null>(null);
 
   // Load history from localStorage on mount
@@ -937,29 +940,60 @@ Generated on: ${new Date().toLocaleString()}
 
   // FRD Audit Handlers
   const handleFRDAuditSubmit = async (file: File) => {
-    setShowFRDAudit(false);
-    toast.info('Uploading and analyzing FRD with Claude...');
+    setFrdAuditLoading(true);
+    setFrdAuditProgress(0);
+    setFrdAuditMessage('');
 
     const formData = new FormData();
     formData.append('file', file);
 
     try {
-      const res = await apiFetch('/api/frd/review', {
+      const streamRes = await apiFetch('/api/frd/review', {
         method: 'POST',
         body: formData,
       });
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.details || err.error || `Server error ${res.status}`);
+      if (!streamRes.ok) {
+        const err = await streamRes.json().catch(() => ({}));
+        throw new Error((err as any).details || (err as any).error || `Server error ${streamRes.status}`);
       }
 
-      const audit: AuditData = await res.json();
+      const audit = await new Promise<AuditData>((resolve, reject) => {
+        const reader = streamRes.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        const fail = (err: unknown) => { reader.cancel(); reject(err); };
+
+        function pump() {
+          reader.read().then(({ done, value }) => {
+            if (done) { fail(new Error('Stream ended unexpectedly')); return; }
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue;
+              try {
+                const event = JSON.parse(line.slice(6));
+                setFrdAuditProgress(event.progress ?? 0);
+                setFrdAuditMessage(event.message ?? '');
+                if (event.status === 'done') { resolve(event.result); return; }
+                if (event.status === 'error') { fail(new Error(event.message || 'Review failed')); return; }
+              } catch { /* ignore malformed line */ }
+            }
+            pump();
+          }).catch(fail);
+        }
+        pump();
+      });
+
       setAuditData(audit);
       toast.success(`FRD review complete — ${audit.issues.length} issues found`);
     } catch (err: any) {
       toast.error(`FRD review failed: ${err.message}`);
-      setShowFRDAudit(true); // re-show upload so user can retry
+      setShowFRDAudit(true);
+    } finally {
+      setFrdAuditLoading(false);
     }
   };
 
@@ -1127,6 +1161,9 @@ Generated on: ${new Date().toLocaleString()}
           onBack={handleBackToHome}
           onSubmit={handleFRDAuditSubmit}
           auditData={auditData}
+          isLoading={frdAuditLoading}
+          progress={frdAuditProgress}
+          progressMessage={frdAuditMessage}
         />
       );
     }

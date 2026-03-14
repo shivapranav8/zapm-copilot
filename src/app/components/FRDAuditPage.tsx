@@ -1,13 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Plus, Clock, FileCheck, FileSpreadsheet } from 'lucide-react';
+import { ArrowLeft, Plus, Clock, FileCheck, FileSpreadsheet, Send, X } from 'lucide-react';
 import { FRDAuditInput } from './FRDAuditInput';
 import { FRDAudit, AuditData } from './FRDAudit';
+import { apiFetch } from '../../utils/apiFetch';
 import { toast } from 'sonner';
 
 interface FRDAuditPageProps {
   onBack: () => void;
   onSubmit: (file: File) => void;
   auditData: AuditData | null;
+  isLoading?: boolean;
+  progress?: number;
+  progressMessage?: string;
 }
 
 interface HistoryItem {
@@ -25,11 +29,14 @@ function saveHistory(items: HistoryItem[]): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(items.slice(0, 10)));
 }
 
-export function FRDAuditPage({ onBack, onSubmit, auditData }: FRDAuditPageProps) {
+export function FRDAuditPage({ onBack, onSubmit, auditData, isLoading = false, progress = 0, progressMessage = '' }: FRDAuditPageProps) {
   const [showInput, setShowInput] = useState(!auditData);
   const [history, setHistory] = useState<HistoryItem[]>(loadHistory);
   const [displayedAudit, setDisplayedAudit] = useState<AuditData | null>(auditData);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [showCliqModal, setShowCliqModal] = useState(false);
+  const [cliqMessage, setCliqMessage] = useState('');
+  const [cliqSending, setCliqSending] = useState(false);
 
   // Sync incoming auditData prop (new audit just completed)
   useEffect(() => {
@@ -52,6 +59,29 @@ export function FRDAuditPage({ onBack, onSubmit, auditData }: FRDAuditPageProps)
     onSubmit(file);
     setShowInput(false);
     setSelectedId(null);
+  };
+
+  const handleCliqSend = async () => {
+    if (!displayedAudit) return;
+    setCliqSending(true);
+    try {
+      const res = await apiFetch('/api/cliq/send-audit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auditData: displayedAudit, message: cliqMessage }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as any).error || 'Failed to send');
+      }
+      toast.success('Audit report sent to Zoho Cliq!');
+      setShowCliqModal(false);
+      setCliqMessage('');
+    } catch (err: any) {
+      toast.error(`Failed to send to Cliq: ${err.message}`);
+    } finally {
+      setCliqSending(false);
+    }
   };
 
   const handleHistoryClick = (item: HistoryItem) => {
@@ -165,13 +195,34 @@ export function FRDAuditPage({ onBack, onSubmit, auditData }: FRDAuditPageProps)
               }}
             />
           </div>
+        ) : isLoading ? (
+          <div className="flex items-center justify-center h-full">
+            <div className="w-full max-w-md px-8 text-center">
+              <div className="w-16 h-16 bg-gradient-to-br from-green-600 to-lime-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg">
+                <FileCheck className="w-8 h-8 text-white" />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-1">
+                {progress < 35 ? 'Extracting file content...' : progress < 70 ? 'Running AI review...' : 'Finalizing report...'}
+              </h3>
+              <p className="text-sm text-gray-500 mb-6">{progressMessage || 'Please wait...'}</p>
+              <div className="w-full bg-gray-200 rounded-full h-2.5 mb-3 overflow-hidden">
+                <div
+                  className="h-2.5 rounded-full bg-gradient-to-r from-green-600 to-lime-500 transition-all duration-700 ease-out"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-xs text-gray-400">
+                <span>{progress}%</span>
+                <span>{progress < 35 ? '📄 Reading' : progress < 70 ? '🤖 Analyzing' : '✅ Finalizing'}</span>
+              </div>
+            </div>
+          </div>
         ) : displayedAudit ? (
           <div className="max-w-5xl mx-auto p-8">
             <FRDAudit
               data={displayedAudit}
               onUpdate={(updatedData) => {
                 setDisplayedAudit(updatedData);
-                // Persist the updated issue statuses back to history
                 setHistory(prev => {
                   const updated = prev.map(h =>
                     h.auditData.fileName === updatedData.fileName &&
@@ -184,12 +235,8 @@ export function FRDAuditPage({ onBack, onSubmit, auditData }: FRDAuditPageProps)
                 });
                 toast.success('Audit updated');
               }}
-              onShare={() => {
-                toast.success('Shared audit report via Zoho Cliq!');
-              }}
-              onDownload={() => {
-                toast.success('Downloading audit report...');
-              }}
+              onShare={() => setShowCliqModal(true)}
+              onDownload={() => toast.success('Downloading audit report...')}
             />
           </div>
         ) : (
@@ -198,12 +245,8 @@ export function FRDAuditPage({ onBack, onSubmit, auditData }: FRDAuditPageProps)
               <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                 <FileCheck className="w-10 h-10 text-gray-400" />
               </div>
-              <h3 className="text-lg font-medium text-gray-900 mb-2">
-                No FRD Selected
-              </h3>
-              <p className="text-sm text-gray-500 mb-4">
-                Upload a new FRD or select from history
-              </p>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">No FRD Selected</h3>
+              <p className="text-sm text-gray-500 mb-4">Upload a new FRD or select from history</p>
               <button
                 onClick={() => setShowInput(true)}
                 className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
@@ -214,6 +257,57 @@ export function FRDAuditPage({ onBack, onSubmit, auditData }: FRDAuditPageProps)
           </div>
         )}
       </div>
+
+      {/* Cliq Share Modal */}
+      {showCliqModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-green-100 rounded-lg flex items-center justify-center">
+                  <Send className="w-4 h-4 text-green-600" />
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900">Share via Zoho Cliq</h3>
+              </div>
+              <button onClick={() => setShowCliqModal(false)} className="p-1 hover:bg-gray-100 rounded-lg transition-colors">
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+
+            <p className="text-sm text-gray-500 mb-4">
+              Sends the audit summary for <span className="font-medium text-gray-700">{displayedAudit?.fileName}</span> to your configured Cliq channel.
+            </p>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Add a message (optional)</label>
+              <textarea
+                value={cliqMessage}
+                onChange={e => setCliqMessage(e.target.value)}
+                placeholder="e.g. Please review the critical issues before the next sprint..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none"
+                rows={3}
+              />
+            </div>
+
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setShowCliqModal(false)}
+                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCliqSend}
+                disabled={cliqSending}
+                className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                <Send className="w-4 h-4" />
+                {cliqSending ? 'Sending...' : 'Send to Cliq'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

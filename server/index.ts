@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { router } from './routes';
 import { frdRouter } from './routes/frdRoutes';
+import { cliqRouter } from './routes/cliqRoutes';
 import { prdGeneratorRouter } from './routes/prdGeneratorRoutes';
 import { pmBuddyRouter } from './routes/pmBuddyRoutes';
 
@@ -75,6 +76,7 @@ if (!zohoClientId) {
 
 app.use(['/api', '/server/node-server/api'], router);
 app.use(['/api/frd', '/server/node-server/api/frd'], frdRouter);
+app.use(['/api/cliq', '/server/node-server/api/cliq'], cliqRouter);
 app.use(['/api/prd-generator', '/server/node-server/api/prd-generator'], prdGeneratorRouter);
 app.use(['/api/pm-buddy', '/server/node-server/api/pm-buddy'], pmBuddyRouter);
 

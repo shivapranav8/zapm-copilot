@@ -38,7 +38,8 @@ function extractFileContent(filePath: string, originalName: string): string {
 
 /**
  * POST /api/frd/review
- * Accepts a file upload, extracts its content, runs it through the Claude FRD Reviewer agent.
+ * Streams SSE progress events while running the FRD review,
+ * so Vercel doesn't freeze CPU during the AI analysis.
  */
 frdRouter.post('/review', upload.single('file'), async (req, res) => {
     if (!req.file) {
@@ -48,21 +49,33 @@ frdRouter.post('/review', upload.single('file'), async (req, res) => {
     const { originalname, path: filePath } = req.file;
     console.log(`📄 [FRD] Received file: ${originalname} (${req.file.size} bytes)`);
 
+    // Keep connection alive — Vercel won't freeze CPU while streaming
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
     try {
+        send({ status: 'processing', progress: 10, message: 'Extracting file content...' });
+
         const content = extractFileContent(filePath, originalname);
         console.log(`📄 [FRD] Extracted ${content.length} characters from ${originalname}`);
 
+        send({ status: 'processing', progress: 30, message: `Content extracted (${content.length.toLocaleString()} chars). Starting AI review...` });
+        send({ status: 'processing', progress: 50, message: 'Analyzing feature completeness, user flows, and edge cases...' });
+
         const auditData = await runFRDReview(content, originalname);
 
-        res.json(auditData);
+        send({ status: 'processing', progress: 95, message: 'Finalizing audit report...' });
+        send({ status: 'done', progress: 100, message: 'Done!', result: auditData });
+        console.log(`✅ [FRD] Review complete — ${auditData.issues.length} issues found`);
     } catch (error) {
         console.error('❌ [FRD] Review failed:', error);
-        res.status(500).json({
-            error: 'FRD review failed',
-            details: error instanceof Error ? error.message : 'Unknown error',
-        });
+        send({ status: 'error', message: error instanceof Error ? error.message : 'FRD review failed' });
     } finally {
-        // Clean up temp file
         fs.unlink(filePath, () => {});
+        res.end();
     }
 });

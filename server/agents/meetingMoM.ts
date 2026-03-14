@@ -141,23 +141,24 @@ Return ONLY valid JSON:
 }
 `
         :
-        `You are an expert meeting minutes assistant specializing in Business Intelligence and Data Analytics teams. Analyze the meeting transcript${input.visualContext ? ' and visual context from screen sharing' : ''} and generate accurate, grounded meeting minutes.
+        `You are an expert meeting minutes assistant specializing in Business Intelligence and Data Analytics teams. Analyze the meeting transcript${input.visualContext ? ' and visual context from screen sharing' : ''} and generate comprehensive, structured meeting minutes.
 ${biContext}
 **Meeting Transcript**:
 ${transcript}
 ${input.visualContext ? `\n**Visual Context from Screen Sharing/Slides**:\n${input.visualContext}\n` : ''}
 
 **Your Task**:
-1. **Meeting Title**: Use "${input.meetingTitle || 'Team Meeting'}" unless a clearer title is explicitly stated in the transcript.
-2. **Attendees**: List names that are clearly heard or mentioned in the transcript. Only add a role in brackets if it is explicitly stated by the person (e.g. "I'm the PM"). If no names are audible, return an empty array.
-3. **Summary**: Write 2-3 sentences summarizing what was actually discussed. Always fill this from transcript content — do not leave it empty.
-4. **Key Discussions**: Extract the main topics and talking points from the transcript. Always populate this — even a single topic is fine.
-5. **Decisions Made**: List only decisions or agreements that were clearly reached. If none, return an empty array.
-6. **Action Items**: List only tasks that were explicitly assigned or agreed upon.
+1. **Meeting Title**: Infer from the transcript context, or use "${input.meetingTitle || 'Team Meeting'}" as a fallback.
+2. **Attendees**: List all participants mentioned or audible in the transcript. Only add a role in brackets if explicitly stated (e.g., "I'm the PM"). If no names are audible, return an empty array.
+3. **Summary**: Write 3-5 sentences summarizing what was discussed, decisions made, and outcomes. Always fill this from transcript content — do not leave it empty.
+4. **Key Discussions**: Extract ALL main topics and talking points from the transcript. Be thorough — include every distinct topic covered, even briefly. Always populate this.
+5. **Decisions Made**: List all decisions or agreements that were clearly reached. If none, return an empty array.
+6. **Action Items**: List all tasks that were assigned or agreed upon.
    - Assignee: use the name if mentioned, otherwise "Unassigned".
-   - Due date: only if a date was explicitly mentioned in the meeting. Otherwise use "TBD". Do NOT invent dates.
-   - Priority: infer from urgency words ("urgent", "ASAP", "by EOD") only. Otherwise "Medium".
-7. **Duration**: Only fill if explicitly discussed (e.g. "let's keep this to 30 mins"). Otherwise use "Not mentioned".
+   - Due date: only if a date was explicitly mentioned. Otherwise use "TBD". Do NOT invent dates.
+   - Priority: infer from urgency words ("urgent", "ASAP", "by EOD", "blocker") only. Otherwise "Medium".
+   - Be specific and actionable in the task description.
+7. **Duration**: Only fill if explicitly discussed (e.g., "let's keep this to 30 mins"). Otherwise use "Not mentioned".
 8. **Next Meeting**: Only if explicitly scheduled in the transcript. Otherwise omit the field entirely.
 
 **Output Format**:
@@ -165,8 +166,8 @@ Return ONLY a valid JSON object (no markdown, no code blocks):
 {
   "meetingTitle": "string",
   "date": "Month DD, YYYY",
-  "duration": "string or 'Not mentioned'",
-  "attendees": ["Name" or "Name (Role if explicitly stated)"],
+  "duration": "Xh XXmin or 'Not mentioned'",
+  "attendees": ["Name (Role if explicitly stated)", ...],
   "summary": "string",
   "keyDiscussions": ["string", ...],
   "decisions": ["string", ...],
@@ -190,7 +191,8 @@ Return ONLY a valid JSON object (no markdown, no code blocks):
 - Use today's date for the "date" field: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
 - Duration: only fill if explicitly discussed in the meeting, otherwise use "Not mentioned"
 - Assign sequential IDs to action items ("1", "2", "3", ...)
-- If the transcript is unclear or in Tanglish, focus on the English technical content
+- If the transcript is in Tanglish, focus on the English technical content — skip Tamil filler words
+- Be comprehensive: extract every discussion point, every decision, every action item from the transcript
 ${input.visualContext ? '- Incorporate information from slides, diagrams, or screen shares when relevant\n' : ''}- Return ONLY the JSON object, no other text
 `;
 

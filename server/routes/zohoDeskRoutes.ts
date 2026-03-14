@@ -115,6 +115,7 @@ zohoDeskRouter.post('/bulk-generate', async (req, res) => {
     }
 
     console.log(`🎫 [Zoho Desk] Bulk generating responses for ${ticketIds.length} ticket(s)...`);
+    console.log(`📝 [Zoho Desk] UI Developer Notes received: ${developerNotes ? `"${developerNotes.slice(0, 120)}"` : 'NONE'}`);
 
     const token = req.session.zoho!.accessToken;
     const email = req.session.zoho!.user?.email || '';
@@ -167,6 +168,7 @@ zohoDeskRouter.post('/bulk-generate', async (req, res) => {
                 parts.push(`[ZOHO DESK PRIVATE THREADS/COMMENTS]:\n${deskPrivate}`);
             }
             const solution = parts.length > 0 ? parts.join('\n\n---\n\n') : undefined;
+            console.log(`🧠 [Zoho Desk] Final context sent to AI: ${solution ? `${solution.slice(0, 200)}...` : 'NONE (AI will use internal knowledge)'}`);
 
             const generated = await generateSupportTicketResponse({
                 communityLink: ticket.webUrl || `Zoho Desk Ticket #${ticket.ticketNumber}`,

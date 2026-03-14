@@ -2,26 +2,8 @@
   "name": "zapm-copilot-server",
   "version": "1.0.0",
   "description": "ZAPM Co-pilot backend server",
-  "main": "index.mjs",
+  "main": "server.bundle.cjs",
   "scripts": {
-    "start": "node index.mjs"
-  },
-  "dependencies": {
-    "@anthropic-ai/sdk": "*",
-    "@ffmpeg-installer/ffmpeg": "*",
-    "@langchain/community": "*",
-    "@langchain/core": "*",
-    "@langchain/openai": "*",
-    "adm-zip": "*",
-    "cookie-session": "*",
-    "cors": "*",
-    "dotenv": "*",
-    "encoding": "*",
-    "exceljs": "*",
-    "express": "*",
-    "fluent-ffmpeg": "*",
-    "mammoth": "*",
-    "multer": "*",
-    "xlsx": "*"
+    "start": "node server.bundle.cjs"
   }
 }

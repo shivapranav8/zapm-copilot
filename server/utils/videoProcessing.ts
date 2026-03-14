@@ -1,11 +1,13 @@
+import fs from 'fs';
+import path from 'path';
 import OpenAI from 'openai';
 import ffmpeg from 'fluent-ffmpeg';
-import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
-import path from 'path';
-import fs from 'fs';
-
-// Set ffmpeg path
-ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+try {
+    const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
+    ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+} catch (e) {
+    console.warn('⚠️  Could not set ffmpeg path for video processing (likely running bundled Mac binary on Linux Catalyst).');
+}
 
 // Lazy OpenAI client — initialized only when actually used (not at startup)
 let _openai: OpenAI | null = null;

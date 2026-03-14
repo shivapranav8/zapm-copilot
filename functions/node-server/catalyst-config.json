@@ -1,0 +1,24 @@
+{
+    "deployment": {
+        "name": "node-server",
+        "stack": "node18",
+        "type": "advancedio",
+        "env_variables": {
+            "NODE_ENV": "production",
+            "PORT": "9000",
+            "TAVILY_API_KEY": "REDACTED",
+            "ANTHROPIC_API_KEY": "REDACTED",
+            "OPENAI_API_KEY": "REDACTED",
+            "ZOHO_DESK_ORG_ID": "60041003425",
+            "ZOHO_MEETING_ORG_ID": "60047096724",
+            "ZOHO_CLIENT_ID": "REDACTED",
+            "ZOHO_CLIENT_SECRET": "REDACTED",
+            "SESSION_SECRET": "REDACTED",
+            "ZOHO_MEETING_REDIRECT_URI": "https://zapm-60057947862.development.catalystserverless.in/server/node-server/api/zoho-meeting/callback",
+            "ZOHO_REDIRECT_URI": "https://zapm-60057947862.development.catalystserverless.in/server/node-server/api/auth/callback"
+        }
+    },
+    "execution": {
+        "main": "server.bundle.cjs"
+    }
+}

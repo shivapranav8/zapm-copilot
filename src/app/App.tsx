@@ -1008,9 +1008,19 @@ Generated on: ${new Date().toLocaleString()}
       return;
     }
 
-    // Handle OAuth error from Zoho
+    // Handle OAuth error from Zoho or Server
     if (params.get('auth_error')) {
-      toast.error(`Login failed: ${params.get('auth_error')}`);
+      const err = params.get('auth_error');
+      const messages: Record<string, string> = {
+        'access_denied': 'Login cancelled by user.',
+        'invalid_code': 'Auth code expired or already used. Please try again.',
+        'redirect_uri_mismatch': 'Configuration error: Redirect URI mismatch.',
+        'missing_credentials': 'Server error: Missing Zoho client credentials.',
+        'token_exchange_failed': 'Failed to exchange code for access token.',
+        'callback_failed': 'An unexpected error occurred during login.'
+      };
+      const msg = messages[err!] || err;
+      toast.error(`Login failed: ${msg}`, { duration: 6000 });
       window.history.replaceState({}, '', window.location.pathname);
       return;
     }

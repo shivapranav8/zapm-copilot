@@ -33,11 +33,17 @@ const ZOHO_SCOPE = [
 ].join(',');
 
 function getRedirectUri(req: Request): string {
-    // On Catalyst, the reverse proxy strips /server/node-server before Express sees the URL,
-    // so we can't reconstruct the prefix from req.originalUrl.
-    // Set ZOHO_REDIRECT_URI explicitly in Catalyst env vars to avoid this.
-    if (process.env.ZOHO_REDIRECT_URI) return process.env.ZOHO_REDIRECT_URI;
+    // 1. Check explicit environment variable (e.g. set in Vercel or local .env)
+    if (process.env.ZOHO_REDIRECT_URI && !process.env.ZOHO_REDIRECT_URI.includes('localhost')) {
+        return process.env.ZOHO_REDIRECT_URI;
+    }
 
+    // 2. Check Vercel URL
+    if (process.env.VERCEL_URL) {
+        return `https://${process.env.VERCEL_URL}/api/auth/callback`;
+    }
+
+    // 3. Fallback to request host reconstruction (local dev or traditional VPS)
     const host = req.get('host') || 'localhost:5001';
     const protocol = req.get('x-forwarded-proto') || req.protocol || 'http';
 
@@ -45,9 +51,15 @@ function getRedirectUri(req: Request): string {
 }
 
 function getFrontendUrl(req: Request): string {
-    // If FRONTEND_URL is explicitly set (e.g. in Catalyst env vars), always use it.
+    // 1. Check explicit environment variable
     if (process.env.FRONTEND_URL) return process.env.FRONTEND_URL;
 
+    // 2. Check Vercel URL
+    if (process.env.VERCEL_URL) {
+        return `https://${process.env.VERCEL_URL}`;
+    }
+
+    // 3. Local dev or generic host
     const host = req.get('host') || 'localhost:5001';
     const protocol = req.get('x-forwarded-proto') || req.protocol || 'http';
 
@@ -55,8 +67,7 @@ function getFrontendUrl(req: Request): string {
     if (host.includes('localhost:') && protocol === 'http') {
         return 'http://localhost:5174';
     }
-    // Production (Catalyst): frontend is served at the root of the same domain.
-    // Do NOT include /server/node-server — that's the backend path, not the frontend.
+    // Production: frontend is served at the root of the same domain.
     return `${protocol}://${host}`;
 }
 
@@ -137,9 +148,10 @@ authRouter.get('/callback', async (req: Request, res: Response) => {
     const clientSecret = getClientSecret();
 
     if (!clientId || !clientSecret) {
-        // Redirect back to the frontend with a clear error instead of hanging on the callback URL
         console.error('❌ OAuth callback: missing ZOHO_CLIENT_ID or ZOHO_CLIENT_SECRET env vars');
-        return res.redirect(`${frontendUrl}?auth_error=${encodeURIComponent('missing_credentials')}`);
+        const errDest = `${frontendUrl}?auth_error=missing_credentials`;
+        res.set('Content-Type', 'text/html');
+        return res.send(`<!DOCTYPE html><html><body><script>window.location.replace(${JSON.stringify(errDest)})</script></body></html>`);
     }
 
     console.log(`🔄 Exchanging code for token (client: ${clientId.slice(0, 12)}..., redirect: ${redirectUri})`);
@@ -160,9 +172,11 @@ authRouter.get('/callback', async (req: Request, res: Response) => {
 
         const tokenData = await tokenRes.json() as any;
         if (!tokenData.access_token) {
-            // Log the full Zoho error so it appears in Catalyst logs
             console.error('❌ Token exchange failed:', JSON.stringify(tokenData));
-            throw new Error(`Token exchange failed: ${tokenData.error || JSON.stringify(tokenData)}`);
+            const zohoErr = tokenData.error || 'token_exchange_failed';
+            const errDest = `${frontendUrl}?auth_error=${encodeURIComponent(zohoErr)}`;
+            res.set('Content-Type', 'text/html');
+            return res.send(`<!DOCTYPE html><html><body><script>window.location.replace(${JSON.stringify(errDest)})</script></body></html>`);
         }
 
         // If state=meeting, this is a Zoho Meeting connect flow — store separately

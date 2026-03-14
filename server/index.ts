@@ -26,8 +26,14 @@ console.log('Target Port:', PORT);
 // In production, frontend + backend are served from the same origin — CORS not needed.
 // In dev, Vite proxy handles /api → localhost:5001, so CORS is still same-origin.
 // We keep the header for explicit cross-origin dev setups.
+const getCorsOrigin = () => {
+    if (process.env.FRONTEND_URL) return process.env.FRONTEND_URL;
+    if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+    return 'http://localhost:5173';
+};
+
 app.use(cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: getCorsOrigin(),
     credentials: true,
 }));
 app.use(express.json());
@@ -67,10 +73,10 @@ if (!zohoClientId) {
     console.log('✅ Zoho OAuth client ready (using', process.env.ZOHO_CLIENT_ID ? 'ZOHO_CLIENT_ID' : 'ZOHO_DESK_CLIENT_ID', ')');
 }
 
-app.use('/api', router);
-app.use('/api/frd', frdRouter);
-app.use('/api/prd-generator', prdGeneratorRouter);
-app.use('/api/pm-buddy', pmBuddyRouter);
+app.use(['/api', '/server/node-server/api'], router);
+app.use(['/api/frd', '/server/node-server/api/frd'], frdRouter);
+app.use(['/api/prd-generator', '/server/node-server/api/prd-generator'], prdGeneratorRouter);
+app.use(['/api/pm-buddy', '/server/node-server/api/pm-buddy'], pmBuddyRouter);
 
 // Global error handler — must be AFTER all routes.
 // Catches any error that escapes a route's try/catch (e.g. Express 5 async propagation).
@@ -91,7 +97,7 @@ if (isProduction) {
     app.use('/app', express.static(distPath));
     app.use((req, res) => {
         // [ROUTING DEBUG] Explicitly catch leaked API requests
-        if (req.originalUrl.startsWith('/api')) {
+        if (req.originalUrl.startsWith('/api') || req.originalUrl.includes('/server/node-server/api')) {
             console.error(`🔴 [API LEAKED TO STATIC] ${req.method} ${req.originalUrl} - This should have been handled by the router.`);
             return res.status(404).json({
                 error: 'API endpoint not found',
@@ -119,12 +125,18 @@ if (isProduction) {
     });
 }
 
-// Export for Vercel
+// Export for Vercel and Catalyst Advanced I/O
 export default app;
 
-// Always start the HTTP server.
-// On Catalyst AppSail, X_ZOHO_CATALYST_LISTEN_PORT is injected at runtime and
-// Catalyst health-checks that exact port — the server MUST be listening on it.
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`✅ Server running on port ${PORT} (env: ${process.env.NODE_ENV || 'development'})`);
-});
+if (typeof module !== 'undefined') {
+    module.exports = app;
+}
+
+// Always start the HTTP server for local dev (Vite proxy).
+// For Catalyst AppSail, it requires a listening port. 
+// For Catalyst Advanced I/O, it MUST NOT listen on a port, otherwise the function hangs.
+if (process.env.NODE_ENV !== 'production' || process.env.ZOHO_APPSAIL) {
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`✅ Server running on port ${PORT} (env: ${process.env.NODE_ENV || 'development'})`);
+    });
+}

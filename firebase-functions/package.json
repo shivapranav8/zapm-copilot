@@ -10,7 +10,7 @@
     "deploy": "firebase deploy --only functions"
   },
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "dependencies": {
     "firebase-functions": "^6.0.0"

@@ -1,8 +1,15 @@
 {
-    "project_id": "24574000000020093",
-    "project_name": "zapm-copilot",
+    "project_id": "24574000000012163",
+    "project_name": "ZAPM",
     "type": "default",
     "client": {
         "source_dir": "dist"
+    },
+    "functions": {
+        "targets": [
+            "node-server"
+        ],
+        "ignore": [],
+        "source": "functions"
     }
 }

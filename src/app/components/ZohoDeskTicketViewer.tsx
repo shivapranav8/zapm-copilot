@@ -12,6 +12,8 @@ export interface ZohoDeskTicket {
   createdDate: string;
   customerName: string;
   customerEmail: string;
+  channel?: string;
+  email?: string;
 }
 
 interface ZohoDeskTicketViewerProps {

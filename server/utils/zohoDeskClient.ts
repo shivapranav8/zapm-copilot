@@ -415,17 +415,35 @@ export interface TicketContext {
 /**
  * Save a draft reply on a Zoho Desk ticket (does NOT send — stays as draft).
  */
-export async function saveTicketDraft(ticketId: string, content: string, token: string): Promise<{ draftId: string }> {
+export async function saveTicketDraft(
+    ticketId: string,
+    content: string,
+    token: string,
+    opts: { fromEmail?: string; toEmail?: string; channel?: string } = {}
+): Promise<{ draftId: string }> {
     const url = `${ZOHO_DESK_BASE_URL}/tickets/${ticketId}/draftReply`;
+
+    const channel = opts.channel || 'FORUMS'; // Forum posts don't use EMAIL channel
+    const body: Record<string, string> = {
+        content,
+        contentType: 'html',
+        channel,
+    };
+    // EMAIL channel requires to/from; FORUMS does not
+    if (channel === 'EMAIL') {
+        if (opts.toEmail) body.to = opts.toEmail;
+        if (opts.fromEmail) body.fromEmailAddress = opts.fromEmail;
+    }
 
     const res = await fetchDesk(url, {
         method: 'POST',
         headers: getHeaders(token),
-        body: JSON.stringify({ content }),
+        body: JSON.stringify(body),
     });
 
     if (!res.ok) {
         const errText = await res.text();
+        console.error(`❌ [Zoho Desk] draftReply failed for ticket ${ticketId}: ${res.status} ${errText}`);
         throw new Error(`Failed to save draft: ${res.status} ${errText}`);
     }
 

@@ -225,7 +225,9 @@ zohoDeskRouter.post('/bulk-generate', async (req, res) => {
  */
 zohoDeskRouter.post('/tickets/:ticketId/draft', async (req, res) => {
     const { ticketId } = req.params;
-    const { content } = req.body as { content: string };
+    const { content, channel, toEmail, fromEmail } = req.body as {
+        content: string; channel?: string; toEmail?: string; fromEmail?: string;
+    };
 
     if (!content?.trim()) {
         return res.status(400).json({ error: 'content is required' });
@@ -233,8 +235,8 @@ zohoDeskRouter.post('/tickets/:ticketId/draft', async (req, res) => {
 
     try {
         const token = req.session.zoho!.accessToken;
-        console.log(`📝 [Zoho Desk] Saving draft for ticket ${ticketId}...`);
-        const result = await saveTicketDraft(ticketId, content, token);
+        console.log(`📝 [Zoho Desk] Saving draft for ticket ${ticketId} (channel: ${channel || 'FORUMS'})...`);
+        const result = await saveTicketDraft(ticketId, content, token, { channel, toEmail, fromEmail });
         console.log(`✅ [Zoho Desk] Draft saved: ${result.draftId}`);
         res.json({ success: true, draftId: result.draftId });
     } catch (error) {

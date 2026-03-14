@@ -50,6 +50,8 @@ export function CommunityTicketPage({ onBack, onSubmit, ticketData }: CommunityT
         createdDate: t.createdTime ? new Date(t.createdTime).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '',
         customerName: t.contact?.name || t.customerName || 'Customer',
         customerEmail: t.contact?.email || t.customerEmail || '',
+        channel: t.channel || 'FORUMS',
+        email: t.contact?.email || t.customerEmail || '',
       }));
       setZohoDeskTickets(tickets);
       setIsFetched(true);
@@ -270,7 +272,12 @@ export function CommunityTicketPage({ onBack, onSubmit, ticketData }: CommunityT
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     credentials: 'include',
-                    body: JSON.stringify({ content: draftContent }),
+                    body: JSON.stringify({
+                      content: draftContent,
+                      channel: selectedTicket.channel || 'FORUMS',
+                      toEmail: selectedTicket.email,
+                      fromEmail: undefined,
+                    }),
                   });
                   if (!res.ok) throw new Error((await res.json()).details || 'Draft save failed');
                   toast.success('Draft saved in Zoho Desk! (not sent to customer)');

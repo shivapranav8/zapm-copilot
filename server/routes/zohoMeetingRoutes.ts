@@ -95,18 +95,18 @@ async function resolveUserKey(token?: string): Promise<string> {
 }
 
 // Helper: get the best available token
-// Priority: Meeting-specific session token > Desk session token (also has ZohoMeeting scopes) > .env store
+// Priority: Meeting-specific session token > Desk session token (also has ZohoMeeting scopes)
+// No .env fallback — we never want to show one user's data to another
 function resolveToken(req: any): string {
     return req.session?.zohoMeeting?.accessToken
         || req.session?.zoho?.accessToken   // Desk login includes ZohoMeeting.meeting.READ + ZohoMeeting.recording.READ
-        || store.accessToken;
+        || '';
 }
 
 // ─── GET /api/zoho-meeting/status ───────────────────────────────────────────
 zohoMeetingRouter.get('/status', (req, res) => {
     const token = (req as any).session?.zohoMeeting?.accessToken
-        || (req as any).session?.zoho?.accessToken
-        || store.accessToken;
+        || (req as any).session?.zoho?.accessToken;
     res.json({ connected: !!token });
 });
 

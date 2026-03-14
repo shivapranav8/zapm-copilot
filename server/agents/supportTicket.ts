@@ -126,6 +126,10 @@ Return **ONLY** a valid JSON object. No markdown preamble, no closing signature.
     // POST-PROCESSING: Convert any leftover markdown bold (**text**) to HTML <strong>
     mainContent = mainContent.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
+    // POST-PROCESSING: Strip any leading greeting the AI included
+    // The Zoho template already adds "Hello {name}," before mainContent — strip it to avoid duplication
+    mainContent = mainContent.replace(/^\s*(<[^>]+>)?\s*Hello\s+\w[\w\s]*,\s*(<\/[^>]+>)?\s*(<br\s*\/?>)?\s*/i, '');
+
     // POST-PROCESSING: Inject delay apology if flag is set
     // This ensures the apology is ALWAYS included when requested, regardless of AI behavior
     if (input.includeDelayApology) {

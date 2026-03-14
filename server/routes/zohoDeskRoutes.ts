@@ -159,7 +159,7 @@ zohoDeskRouter.post('/bulk-generate', async (req, res) => {
 
             // Priority: (internal sidebar comments + private thread notes) → UI dev notes → empty
             const privateContext = [comments.trim(), ctx.internalNotes.trim()].filter(Boolean).join('\n---\n');
-            const solution = privateContext || developerNotes?.trim() || 'Answer the customer\'s question directly based on your Zoho Analytics knowledge.';
+            const solution = privateContext || developerNotes?.trim();
 
             const generated = await generateSupportTicketResponse({
                 communityLink: ticket.webUrl || `Zoho Desk Ticket #${ticket.ticketNumber}`,

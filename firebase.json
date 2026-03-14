@@ -1,0 +1,12 @@
+{
+  "functions": [
+    {
+      "source": "firebase-functions",
+      "codebase": "default",
+      "predeploy": [
+        "npm run build",
+        "cp dist/server/index.cjs firebase-functions/server.bundle.cjs"
+      ]
+    }
+  ]
+}

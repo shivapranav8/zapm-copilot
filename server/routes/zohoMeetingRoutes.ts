@@ -501,6 +501,12 @@ zohoMeetingRouter.post('/process', async (req, res) => {
 
         const result = await transcribeVideo(tmpFile);
         transcript = result.transcript;
+
+        // Dots-only transcript = Whisper detected silence — audio track was empty
+        const cleanedTranscript = transcript?.replace(/[\s.]+/g, '').trim() ?? '';
+        if (cleanedTranscript.length < 10) {
+            throw new Error('Audio track appears to be silent (Whisper returned only silence markers). The recording may have no audio, or ffmpeg extracted the wrong track. Check Vercel logs for audio stream details.');
+        }
         const transcriptLen = transcript?.trim().length ?? 0;
         console.log(`📝 Transcript length: ${transcriptLen} chars`);
         console.log(`📝 Transcript preview: ${transcript?.slice(0, 300)}`);

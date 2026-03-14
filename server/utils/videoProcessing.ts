@@ -28,29 +28,47 @@ export async function extractAudioFromVideo(videoPath: string): Promise<string> 
     const audioPath = videoPath.replace(path.extname(videoPath), '.mp3');
 
     return new Promise((resolve, reject) => {
-        ffmpeg(videoPath)
-            .output(audioPath)
-            .audioCodec('libmp3lame')
-            .audioBitrate('128k')
-            .noVideo()
-            .on('start', (commandLine) => {
-                console.log('🎵 FFmpeg command:', commandLine);
-            })
-            .on('progress', (progress) => {
-                if (progress.percent) {
-                    console.log(`⏳ Progress: ${Math.round(progress.percent)}%`);
+        // Probe first to log what audio streams are in the file
+        ffmpeg.ffprobe(videoPath, (probeErr, metadata) => {
+            if (probeErr) {
+                console.warn('⚠️  ffprobe failed (proceeding anyway):', probeErr.message);
+            } else {
+                const audioStreams = (metadata.streams || []).filter((s: any) => s.codec_type === 'audio');
+                console.log(`🔊 Audio streams in file: ${audioStreams.length}`);
+                audioStreams.forEach((s: any, i: number) => {
+                    console.log(`   Stream ${i}: codec=${s.codec_name}, channels=${s.channels}, sample_rate=${s.sample_rate}, duration=${s.duration}`);
+                });
+                if (audioStreams.length === 0) {
+                    console.error('❌ No audio streams found in video file!');
                 }
-            })
-            .on('end', () => {
-                console.log('✅ Audio extraction complete');
-                console.log(`📁 Audio file: ${audioPath}`);
-                resolve(audioPath);
-            })
-            .on('error', (err) => {
-                console.error('❌ Audio extraction failed:', err);
-                reject(err);
-            })
-            .run();
+            }
+
+            ffmpeg(videoPath)
+                .output(audioPath)
+                .audioCodec('libmp3lame')
+                .audioBitrate('128k')
+                .noVideo()
+                .outputOptions(['-map', '0:a:0'])  // Explicitly pick first audio stream
+                .on('start', (commandLine) => {
+                    console.log('🎵 FFmpeg command:', commandLine);
+                })
+                .on('progress', (progress) => {
+                    if (progress.percent) {
+                        console.log(`⏳ Progress: ${Math.round(progress.percent)}%`);
+                    }
+                })
+                .on('end', () => {
+                    const audioSize = fs.existsSync(audioPath) ? fs.statSync(audioPath).size : 0;
+                    console.log('✅ Audio extraction complete');
+                    console.log(`📁 Audio file: ${audioPath} (${(audioSize / 1024).toFixed(1)} KB)`);
+                    resolve(audioPath);
+                })
+                .on('error', (err) => {
+                    console.error('❌ Audio extraction failed:', err);
+                    reject(err);
+                })
+                .run();
+        });
     });
 }
 

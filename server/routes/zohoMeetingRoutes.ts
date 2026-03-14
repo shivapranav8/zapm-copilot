@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { transcribeVideo } from '../utils/audioTranscription';
 import { generateMeetingMoM } from '../agents/meetingMoM';
 import { saveMoM } from '../utils/storage';
-import { createJob, updateJob, getJob } from '../utils/jobStore';
+import { getJob } from '../utils/jobStore';
 
 export const zohoMeetingRouter = Router();
 
@@ -417,7 +417,8 @@ zohoMeetingRouter.get('/recordings', async (req, res) => {
 });
 
 // ─── POST /api/zoho-meeting/process ──────────────────────────────────────────
-// Starts background processing. Returns { jobId } immediately.
+// Streams SSE progress events so the HTTP connection stays open.
+// This prevents Vercel from freezing the CPU between requests.
 zohoMeetingRouter.post('/process', async (req, res) => {
     const { recordingKey, downloadUrl, transcriptUrl, meetingTitle, detailed } = req.body as {
         recordingKey?: string;
@@ -431,104 +432,97 @@ zohoMeetingRouter.post('/process', async (req, res) => {
         return res.status(400).json({ error: 'downloadUrl or recordingKey is required' });
     }
 
-    const jobId = uuidv4();
-    createJob(jobId);
+    // Keep connection alive — Vercel won't freeze CPU while streaming
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
 
-    // Respond immediately with the jobId so frontend can start polling
-    res.json({ jobId });
+    const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
 
-    // Run processing in background (no await)
     const token = resolveToken(req);
+    const jobId = uuidv4();
     const tmpFile = path.join(os.tmpdir(), `zoho_rec_${jobId}.mp4`);
+    try {
+        send({ status: 'processing', progress: 5, message: 'Resolving recording URL...' });
 
-    (async () => {
-        try {
-            updateJob(jobId, { status: 'processing', progress: 5, message: 'Resolving recording URL...' });
-
-            let finalDownloadUrl = downloadUrl;
-            if (!finalDownloadUrl && recordingKey) {
-                try {
-                    const userKey = await resolveUserKey(token);
-                    const url = userKey
-                        ? `${MEETING_API_BASE}/${userKey}/recordings/${recordingKey}.json`
-                        : `${MEETING_API_BASE}/recordings/${recordingKey}.json`;
-                    const response = await meetingFetch(url, {}, token);
-                    const data = await response.json() as any;
-                    finalDownloadUrl = data.downloadUrl || data.download_url || data.recordingUrl || '';
-                } catch (err) {
-                    // try constructed URL
-                }
+        let finalDownloadUrl = downloadUrl;
+        if (!finalDownloadUrl && recordingKey) {
+            try {
+                const userKey = await resolveUserKey(token);
+                const url = userKey
+                    ? `${MEETING_API_BASE}/${userKey}/recordings/${recordingKey}.json`
+                    : `${MEETING_API_BASE}/recordings/${recordingKey}.json`;
+                const response = await meetingFetch(url, {}, token);
+                const data = await response.json() as any;
+                finalDownloadUrl = data.downloadUrl || data.download_url || data.recordingUrl || '';
+            } catch (err) {
+                // try constructed URL
             }
-            if (!finalDownloadUrl && recordingKey) {
-                finalDownloadUrl = `https://download-accl.zoho.com/webdownload?event-id=${recordingKey}&x-service=meetinglab&x-cli-msg=`;
-            }
-            if (!finalDownloadUrl) {
-                throw new Error('Could not determine download URL for this recording.');
-            }
-
-            // Download video
-            updateJob(jobId, { progress: 15, message: 'Downloading recording...' });
-            console.log(`\n📝 [${jobId}] Processing: "${meetingTitle || recordingKey}"`);
-
-            let transcript = '';
-
-            const dlResponse = await meetingFetch(finalDownloadUrl, {}, token);
-            console.log(`📡 Download HTTP status: ${dlResponse.status}`);
-            if (!dlResponse.ok) {
-                throw new Error(`Download failed (HTTP ${dlResponse.status}). Re-login after adding new scopes.`);
-            }
-            const buffer = await dlResponse.arrayBuffer();
-            fs.writeFileSync(tmpFile, Buffer.from(buffer));
-            const sizeMB = (buffer.byteLength / 1024 / 1024).toFixed(2);
-            console.log(`✅ Downloaded: ${sizeMB} MB`);
-
-            updateJob(jobId, { progress: 35, message: `Downloaded (${sizeMB} MB). Extracting audio...` });
-
-            // Transcribe
-            updateJob(jobId, { progress: 45, message: 'Transcribing audio with Whisper...' });
-            console.log('🎙️  Transcribing with Whisper...');
-
-            // Patch transcribeVideo to report progress mid-way
-            const result = await transcribeVideo(tmpFile, (chunkProgress: number) => {
-                const mapped = 45 + Math.round(chunkProgress * 0.35); // 45% → 80%
-                updateJob(jobId, { progress: mapped, message: `Transcribing... ${Math.round(chunkProgress * 100)}%` });
-            });
-            transcript = result.transcript;
-            try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
-            try { if (result.audioPath) fs.unlinkSync(result.audioPath); } catch { /* ignore */ }
-
-            // Fallback to Zoho transcript
-            if (!transcript && transcriptUrl) {
-                updateJob(jobId, { progress: 80, message: 'Using Zoho transcript as fallback...' });
-                const txtRes = await fetch(transcriptUrl);
-                if (txtRes.ok) transcript = await txtRes.text();
-            }
-
-            if (!transcript) {
-                throw new Error('Could not get transcript. Re-login with new scopes and try again.');
-            }
-
-            // Generate MoM
-            updateJob(jobId, { progress: 85, message: 'Generating Minutes of Meeting with GPT-4o...' });
-            console.log('🤖 Generating MoM with GPT-4o...');
-            const momData = await generateMeetingMoM({
-                transcript,
-                meetingTitle: meetingTitle || 'Zoho Meeting Recording',
-                detailed,
-            });
-
-            updateJob(jobId, { progress: 97, message: 'Saving...' });
-            const storedMoM = await saveMoM(momData, transcript);
-
-            updateJob(jobId, { status: 'done', progress: 100, message: 'Done!', result: storedMoM });
-            console.log(`✅ [${jobId}] MoM generated successfully`);
-        } catch (err) {
-            try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
-            const msg = err instanceof Error ? err.message : 'Unknown error';
-            console.error(`❌ [${jobId}] Error:`, msg);
-            updateJob(jobId, { status: 'error', message: msg });
         }
-    })();
+        if (!finalDownloadUrl && recordingKey) {
+            finalDownloadUrl = `https://download-accl.zoho.com/webdownload?event-id=${recordingKey}&x-service=meetinglab&x-cli-msg=`;
+        }
+        if (!finalDownloadUrl) {
+            throw new Error('Could not determine download URL for this recording.');
+        }
+
+        send({ status: 'processing', progress: 15, message: 'Downloading recording...' });
+        console.log(`\n📝 [${jobId}] Processing: "${meetingTitle || recordingKey}"`);
+
+        let transcript = '';
+
+        const dlResponse = await meetingFetch(finalDownloadUrl, {}, token);
+        console.log(`📡 Download HTTP status: ${dlResponse.status}`);
+        if (!dlResponse.ok) {
+            throw new Error(`Download failed (HTTP ${dlResponse.status}). Re-login after adding new scopes.`);
+        }
+        const buffer = await dlResponse.arrayBuffer();
+        fs.writeFileSync(tmpFile, Buffer.from(buffer));
+        const sizeMB = (buffer.byteLength / 1024 / 1024).toFixed(2);
+        console.log(`✅ Downloaded: ${sizeMB} MB`);
+
+        send({ status: 'processing', progress: 35, message: `Downloaded (${sizeMB} MB). Extracting audio...` });
+        send({ status: 'processing', progress: 45, message: 'Transcribing audio with Whisper...' });
+        console.log('🎙️  Transcribing with Whisper...');
+
+        const result = await transcribeVideo(tmpFile);
+        transcript = result.transcript;
+        try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+        try { if (result.audioPath) fs.unlinkSync(result.audioPath); } catch { /* ignore */ }
+
+        // Fallback to Zoho transcript
+        if (!transcript && transcriptUrl) {
+            send({ status: 'processing', progress: 80, message: 'Using Zoho transcript as fallback...' });
+            const txtRes = await fetch(transcriptUrl);
+            if (txtRes.ok) transcript = await txtRes.text();
+        }
+
+        if (!transcript) {
+            throw new Error('Could not get transcript. Re-login with new scopes and try again.');
+        }
+
+        send({ status: 'processing', progress: 85, message: 'Generating Minutes of Meeting with GPT-4o...' });
+        console.log('🤖 Generating MoM with GPT-4o...');
+        const momData = await generateMeetingMoM({
+            transcript,
+            meetingTitle: meetingTitle || 'Zoho Meeting Recording',
+            detailed,
+        });
+
+        send({ status: 'processing', progress: 97, message: 'Saving...' });
+        const storedMoM = await saveMoM(momData, transcript);
+
+        send({ status: 'done', progress: 100, message: 'Done!', result: storedMoM });
+        console.log(`✅ [${jobId}] MoM generated successfully`);
+    } catch (err) {
+        try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        console.error(`❌ [${jobId}] Error:`, msg);
+        send({ status: 'error', message: msg });
+    } finally {
+        res.end();
+    }
 });
 
 // ─── GET /api/zoho-meeting/job/:jobId ────────────────────────────────────────

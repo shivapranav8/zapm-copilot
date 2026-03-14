@@ -701,8 +701,8 @@ They can review and provide feedback directly in Cliq!`,
       let result: MeetingMoMData;
 
       if (data.type === 'zoho') {
-        // Step 1: Start the job — returns jobId immediately
-        const startRes = await apiFetch('/api/zoho-meeting/process', {
+        // Stream SSE — keeps HTTP connection open so Vercel doesn't freeze the CPU
+        const streamRes = await apiFetch('/api/zoho-meeting/process', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
@@ -713,32 +713,36 @@ They can review and provide feedback directly in Cliq!`,
             meetingTitle: data.title || 'Zoho Meeting Recording',
           }),
         });
-        if (!startRes.ok) {
-          const err = await startRes.json().catch(() => ({}));
-          throw new Error(err.details || err.error || `Server error ${startRes.status}`);
+        if (!streamRes.ok) {
+          const err = await streamRes.json().catch(() => ({}));
+          throw new Error((err as any).details || (err as any).error || `Server error ${streamRes.status}`);
         }
-        const { jobId } = await startRes.json();
 
-        // Step 2: Poll until done
         result = await new Promise<MeetingMoMData>((resolve, reject) => {
-          const interval = setInterval(async () => {
-            try {
-              const pollRes = await apiFetch(`/api/zoho-meeting/job/${jobId}`, {
-                credentials: 'include',
-              });
-              if (!pollRes.ok) return;
-              const job = await pollRes.json();
-              setMeetingMoMProgress(job.progress ?? 0);
-              setMeetingMoMMessage(job.message ?? '');
-              if (job.status === 'done') {
-                clearInterval(interval);
-                resolve(job.result);
-              } else if (job.status === 'error') {
-                clearInterval(interval);
-                reject(new Error(job.message || 'Processing failed'));
+          const reader = streamRes.body!.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          function pump() {
+            reader.read().then(({ done, value }) => {
+              if (done) { reject(new Error('Stream ended unexpectedly')); return; }
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop() || '';
+              for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                  const event = JSON.parse(line.slice(6));
+                  setMeetingMoMProgress(event.progress ?? 0);
+                  setMeetingMoMMessage(event.message ?? '');
+                  if (event.status === 'done') { resolve(event.result); return; }
+                  if (event.status === 'error') { reject(new Error(event.message || 'Processing failed')); return; }
+                } catch { /* ignore malformed line */ }
               }
-            } catch (e) { /* network hiccup, keep polling */ }
-          }, 1500);
+              pump();
+            }).catch(reject);
+          }
+          pump();
         });
       } else if (data.type === 'link') {
         setMeetingMoMMessage('Generating MoM from link...');

@@ -146,8 +146,8 @@ Return **ONLY** a valid JSON object. No markdown preamble, no closing signature.
     });
 
     // Simple draft content — what actually gets saved to Zoho Desk
+    // NOTE: No greeting wrapper here — the AI already includes "Hello {name}," in mainContent
     const draftContent = `<div style="font-family: Arial, sans-serif; font-size: 13px;">
-<p>Hello ${userName},</p>
 ${mainContent}
 <p>Hope this helps!</p>
 <p>Regards,<br>${responderName}<br>Zoho Analytics Support</p>

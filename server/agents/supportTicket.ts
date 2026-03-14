@@ -88,7 +88,8 @@ GIVEN CONTEXT IS YOUR ONLY SOURCE. DO NOT ADD OR SUGGEST SOLUTIONS NOT MENTIONED
 ---
 
 **HTML FORMAT & BOLDING RULES (ULTRA-STRICT)**:
-- **BOLD EVERY FEATURE**: You **MUST** wrap every mention of **Zoho Analytics**, **Zoho CRM**, **Query Table**, **Pivot View**, **Formula Column**, **Data Sources**, **Dashboard**, and **Reports** in **<strong>** tags.
+- DO NOT USE MARKDOWN. No ** or * anywhere in the output. Only HTML.
+- **BOLD EVERY FEATURE**: Wrap every mention of Zoho Analytics, Zoho CRM, Query Table, Pivot View, Formula Column, Data Sources, Dashboard, and Reports in <strong> tags.
 - **SQL/CODE**: Bold keywords. <strong>SELECT</strong> * <br><strong>FROM</strong> Table
 - Separate paragraphs with <br><br>.
 - The template auto-adds greeting and signature.
@@ -119,6 +120,9 @@ Return **ONLY** a valid JSON object. No markdown preamble, no closing signature.
         console.error('Failed to parse AI response as JSON, falling back to raw content clean-up');
         mainContent = (response.content as string).replace(/```json|```/g, '').trim();
     }
+
+    // POST-PROCESSING: Convert any leftover markdown bold (**text**) to HTML <strong>
+    mainContent = mainContent.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
     // POST-PROCESSING: Inject delay apology if flag is set
     // This ensures the apology is ALWAYS included when requested, regardless of AI behavior

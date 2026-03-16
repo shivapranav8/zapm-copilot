@@ -6,7 +6,7 @@ import { CommunityResponseData } from '../templates/communityResponseTemplate';
 // Input schema for support ticket agent
 const SupportTicketInputSchema = z.object({
     communityLink: z.string().describe('URL to the community thread'),
-    developerNotes: z.string().optional().describe('Technical context and developer notes about the issue'),
+    developerNotes: z.string().describe('Technical context and developer notes about the issue'),
     problemStatement: z.string().optional().describe('Problem statement from the support ticket'),
     prdContent: z.string().optional().describe('Relevant PRD content or context'),
     includeDelayApology: z.boolean().optional().describe('Whether to include "Sorry for the delay" (true if ticket is >7 days old)'),
@@ -35,7 +35,7 @@ export async function generateSupportTicketResponse(
 ): Promise<SupportTicketOutput> {
     console.log('\n🎫 Generating support ticket response...');
     console.log('📝 Community Link:', input.communityLink);
-    console.log('📝 Developer Notes:', input.developerNotes ? input.developerNotes.substring(0, 100) + '...' : 'NONE');
+    console.log('📝 Developer Notes:', input.developerNotes.substring(0, 100) + '...');
 
     const hasDelay = input.includeDelayApology === true;
     const hasDeveloperNotes = input.developerNotes &&

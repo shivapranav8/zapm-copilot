@@ -57,7 +57,11 @@ export function CommunityTicketPage({ onBack, onSubmit, ticketData }: CommunityT
       setIsFetched(true);
       setShowTicketsList(true);
       setSelectedTicket(null);
-      toast.success(`Fetched ${tickets.length} ticket${tickets.length !== 1 ? 's' : ''} from Zoho Desk`);
+      if (tickets.length === 0) {
+        toast.success('Hurray! You have no open tickets 🎉');
+      } else {
+        toast.success(`Fetched ${tickets.length} ticket${tickets.length !== 1 ? 's' : ''} from Zoho Desk`);
+      }
     } catch (err: any) {
       toast.error(`Failed to fetch tickets: ${err.message}`);
     } finally {

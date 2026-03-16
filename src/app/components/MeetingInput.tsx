@@ -11,7 +11,7 @@ interface ZohoMeetingRecording {
   duration: string;
   recordingUrl: string;
   transcriptUrl: string;
-  participants: number;
+  participants: number | null;
 }
 
 interface MeetingInputProps {
@@ -97,7 +97,7 @@ export function MeetingInput({ onSubmit, onClose }: MeetingInputProps) {
         duration: String(r.duration || ''),
         recordingUrl: r.downloadUrl || '',
         transcriptUrl: r.transcriptUrl || '',
-        participants: 0,
+        participants: typeof r.participants === 'number' ? r.participants : null,
       }));
 
       setZohoRecordings(recordings);
@@ -335,9 +335,11 @@ export function MeetingInput({ onSubmit, onClose }: MeetingInputProps) {
                               <Clock className="w-3 h-3" />
                               <span>{recording.duration} mins</span>
                             </div>
-                            <div className="text-xs text-gray-500">
-                              {recording.participants} participants
-                            </div>
+                            {recording.participants !== null && recording.participants > 0 && (
+                              <div className="text-xs text-gray-500">
+                                {recording.participants} participants
+                              </div>
+                            )}
                           </div>
                         </div>
                         {selectedRecording?.id === recording.id && (

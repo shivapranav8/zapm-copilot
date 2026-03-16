@@ -227,7 +227,12 @@ export async function getOpenTicketsAssignedToMe(limit = 50, token: string, emai
             throw new Error(`Failed to fetch tickets: ${res.status} ${errorText}`);
         }
 
-        const data = await res.json() as any;
+        const rawText = await res.text();
+        if (!rawText.trim()) {
+            console.log('[Zoho Desk] Tickets endpoint returned empty body — Hurray, you have no open tickets!');
+            return [];
+        }
+        const data = JSON.parse(rawText) as any;
 
         // Log the FULL structure of the first ticket to understand Zoho's response shape
         const sample = data.data?.[0];

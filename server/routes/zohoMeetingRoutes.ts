@@ -401,9 +401,47 @@ zohoMeetingRouter.get('/recordings', async (req, res) => {
             downloadUrl: r.downloadUrl || r.download_url || r.recordingUrl || r.recordingLink || r.playUrl || '',
             transcriptUrl: r.transcriptionPublicDownloadUrl || r.transcriptUrl || r.transcriptionUrl || '',
             fileSize: r.fileSize || r.file_size || r.size || 0,
+            _participantsFromRecord: r.noOfParticipants || r.participantCount || r.attendeeCount
+                || r.noOfAttendees || r.participants || null,
+            _sessionKey: r.sessionKey || r.meetingKey || r.key || r.id || '',
         }));
 
-        res.json({ recordings });
+        const withParticipants = await Promise.allSettled(
+            recordings.map(async (rec) => {
+                if (rec._participantsFromRecord !== null) {
+                    return { ...rec, participants: rec._participantsFromRecord };
+                }
+                if (!rec._sessionKey) return { ...rec, participants: null };
+
+                const candidateUrls: string[] = [];
+                if (zsoid) candidateUrls.push(`${MEETING_API_BASE}/${zsoid}/sessions/${rec._sessionKey}/attendees.json`);
+                if (userKey) candidateUrls.push(`${MEETING_API_BASE}/${userKey}/sessions/${rec._sessionKey}/attendees.json`);
+                candidateUrls.push(`${MEETING_API_BASE}/sessions/${rec._sessionKey}/attendees.json`);
+
+                for (const url of candidateUrls) {
+                    try {
+                        const r2 = await meetingFetch(url, {}, token);
+                        if (r2.ok) {
+                            const body = await r2.json() as any;
+                            const list = body.attendees || body.participants || body.data || [];
+                            const count = Array.isArray(list)
+                                ? list.length
+                                : (body.totalCount || body.count || body.noOfAttendees || null);
+                            if (count !== null) return { ...rec, participants: count };
+                        }
+                    } catch { /* try next */ }
+                }
+                return { ...rec, participants: null };
+            })
+        );
+
+        const finalRecordings = withParticipants.map((result, i) => {
+            const rec = result.status === 'fulfilled' ? result.value : recordings[i];
+            const { _participantsFromRecord, _sessionKey, ...clean } = rec as any;
+            return { ...clean, participants: (rec as any).participants ?? null };
+        });
+
+        res.json({ recordings: finalRecordings });
     } catch (err) {
         console.error('❌ Error fetching Zoho recordings:', err);
         res.status(500).json({

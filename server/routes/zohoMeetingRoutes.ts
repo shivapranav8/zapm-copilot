@@ -397,7 +397,7 @@ zohoMeetingRouter.get('/recordings', async (req, res) => {
             key: r.erecordingId || r.sessionKey || r.meetingKey || r.key || r.id || '',
             title: r.topic || r.sessionTopic || r.title || r.subject || r.meetingTitle || 'Untitled Meeting',
             startTime: r.datenTime || r.startTime || r.start_time || r.scheduledTime || r.startDateTime || '',
-            duration: r.duration || 0,
+            durationMs: r.duration || 0,
             downloadUrl: r.downloadUrl || r.download_url || r.recordingUrl || r.recordingLink || r.playUrl || '',
             transcriptUrl: r.transcriptionPublicDownloadUrl || r.transcriptUrl || r.transcriptionUrl || '',
             fileSize: r.fileSize || r.file_size || r.size || 0,

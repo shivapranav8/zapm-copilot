@@ -8,10 +8,30 @@ interface ZohoMeetingRecording {
   meetingId: string;
   meetingTitle: string;
   startTime: string;
-  duration: string;
+  durationMs: number;
   recordingUrl: string;
   transcriptUrl: string;
   participants: number | null;
+}
+
+function formatDuration(ms: number): string {
+  if (!ms) return '';
+  const totalMins = Math.round(ms / 1000 / 60);
+  if (totalMins < 60) return `${totalMins} min${totalMins !== 1 ? 's' : ''}`;
+  const hours = Math.floor(totalMins / 60);
+  const mins = totalMins % 60;
+  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
+function formatStartTime(raw: string): string {
+  if (!raw) return '';
+  try {
+    return new Date(raw).toLocaleString('en-IN', {
+      day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true,
+    });
+  } catch {
+    return raw;
+  }
 }
 
 interface MeetingInputProps {
@@ -94,7 +114,7 @@ export function MeetingInput({ onSubmit, onClose }: MeetingInputProps) {
         meetingId: r.key || '',
         meetingTitle: r.title || 'Untitled Meeting',
         startTime: r.startTime || '',
-        duration: String(r.duration || ''),
+        durationMs: r.durationMs || 0,
         recordingUrl: r.downloadUrl || '',
         transcriptUrl: r.transcriptUrl || '',
         participants: typeof r.participants === 'number' ? r.participants : null,
@@ -329,12 +349,14 @@ export function MeetingInput({ onSubmit, onClose }: MeetingInputProps) {
                           <div className="flex items-center gap-4 mt-2">
                             <div className="flex items-center gap-1 text-xs text-gray-500">
                               <Calendar className="w-3 h-3" />
-                              <span>{recording.startTime}</span>
+                              <span>{formatStartTime(recording.startTime)}</span>
                             </div>
-                            <div className="flex items-center gap-1 text-xs text-gray-500">
-                              <Clock className="w-3 h-3" />
-                              <span>{recording.duration} mins</span>
-                            </div>
+                            {recording.durationMs > 0 && (
+                              <div className="flex items-center gap-1 text-xs text-gray-500">
+                                <Clock className="w-3 h-3" />
+                                <span>{formatDuration(recording.durationMs)}</span>
+                              </div>
+                            )}
                             {recording.participants !== null && recording.participants > 0 && (
                               <div className="text-xs text-gray-500">
                                 {recording.participants} participants

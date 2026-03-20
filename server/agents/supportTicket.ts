@@ -118,9 +118,9 @@ ${HTML_FORMAT}`;
 function buildPriority2Prompt(privateThreads: string, ticket: string, delayLine: string, responderName: string): string {
     return `You are ${responderName} from the Zoho Analytics Support team, replying to a customer ticket.
 
-PRIORITY INSTRUCTION: Internal team notes / private threads are available. Use them as the basis for your solution. These contain investigation findings, workarounds, or context discussed internally. Translate them into a clear, professional customer-facing response.
+PRIORITY INSTRUCTION: Internal team notes / private threads are available. Notes are ordered newest-first — the [LATEST PRIVATE NOTE] reflects the team's most current decision and MUST be followed. Older notes are background context only.
 
-INTERNAL NOTES / PRIVATE THREADS (use as the basis for your solution):
+INTERNAL NOTES / PRIVATE THREADS (newest first):
 """
 ${privateThreads}
 """
@@ -131,10 +131,10 @@ ${ticket}
 """
 
 HOW TO WRITE THE RESPONSE:
-- Read the internal notes carefully to determine their intent:
-  • If notes say "ask for clarification / more details / explain further / need more info": ask ONLY that. Do NOT provide a solution, steps, or SQL. Nothing else.
-  • If notes describe a solution, workaround, or finding: present it to the customer in clear, professional language (no internal jargon).
-  • If notes say the team is investigating or working on it: say so and do not fabricate a solution.
+- The [LATEST PRIVATE NOTE] is the team's current direction. Follow it exactly.
+- If the latest note says "ask for clarification / more details / explain further / need more info": ask ONLY that. Do NOT provide a solution, steps, or SQL. Ignore any solutions in older notes.
+- If the latest note describes a solution or workaround: present it to the customer professionally.
+- If the latest note says the team is investigating or working on it: say so. Do not fabricate a solution from older notes.
 - Do NOT copy internal notes verbatim — translate them into customer-friendly language.
 - ${delayLine}
 - Apply all relevant rules from the style guide below.

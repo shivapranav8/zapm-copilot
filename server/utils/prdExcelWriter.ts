@@ -168,25 +168,61 @@ function buildUseCases(wb: ExcelJS.Workbook, data: PRDSheetData) {
 
     let r = 2;
 
+    // Track groups of consecutive UCs with the same category (prefix before ' — ')
+    // so we can merge col 2 cells for them after writing
+    const categoryGroups: { category: string; startRow: number; endRow: number }[] = [];
+    let currentGroup: { category: string; startRow: number; endRow: number } | null = null;
+
     for (const uc of data.useCases) {
         if (uc.type === 'section') {
+            currentGroup = null; // reset grouping on section break
             sectionRow(ws, r, uc.sectionName || '', 8);
             r++;
         } else {
-            // Use case row
+            // Split "Category — Sub Use Case" on em dash or " - "
+            const raw = uc.useCase || '';
+            const sepIndex = raw.indexOf(' — ');
+            const hasSep = sepIndex !== -1;
+            const category = hasSep ? raw.slice(0, sepIndex).trim() : raw;
+            const subCase  = hasSep ? raw.slice(sepIndex + 3).trim() : '';
+
             sc(ws, r, 1, uc.sno || '', { bold: true, halign: 'center', valign: 'middle' });
-            sc(ws, r, 2, uc.useCase || '', { bold: true, halign: 'center', valign: 'middle' });
-            sc(ws, r, 3, '', { halign: 'center', valign: 'middle' });
+            sc(ws, r, 2, hasSep ? category : raw, { bold: true, halign: 'center', valign: 'middle' });
+            sc(ws, r, 3, subCase, { bold: false, halign: 'left', valign: 'middle' });
             sc(ws, r, 4, uc.description || '', { halign: 'left', valign: 'top' });
             sc(ws, r, 5, uc.pmNotes || '', { halign: 'left', valign: 'top' });
             sc(ws, r, 6, '', { halign: 'left', valign: 'top' });
             sc(ws, r, 7, '', { halign: 'left', valign: 'top' });
             sc(ws, r, 8, '', { halign: 'left', valign: 'top' });
 
-            // Dynamic row height based on description length
-            const descLines = Math.max(1, Math.ceil((uc.description || '').length / 80));
-            ws.getRow(r).height = Math.max(18, descLines * 13.5 + 4);
+            // Dynamic row height based on actual newlines in description
+            const desc = uc.description || '';
+            const newlineCount = (desc.match(/\n/g) || []).length;
+            const descLines = newlineCount > 0 ? newlineCount + 1 : Math.max(1, Math.ceil(desc.length / 80));
+            ws.getRow(r).height = Math.max(18, descLines * 15 + 4);
+
+            // Track category group for merging
+            if (hasSep) {
+                if (currentGroup && currentGroup.category === category) {
+                    currentGroup.endRow = r;
+                } else {
+                    currentGroup = { category, startRow: r, endRow: r };
+                    categoryGroups.push(currentGroup);
+                }
+            } else {
+                currentGroup = null;
+            }
+
             r++;
+        }
+    }
+
+    // Merge col 2 cells for groups with more than one row
+    for (const group of categoryGroups) {
+        if (group.endRow > group.startRow) {
+            ws.mergeCells(group.startRow, 2, group.endRow, 2);
+            const merged = ws.getCell(group.startRow, 2);
+            merged.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
         }
     }
 }

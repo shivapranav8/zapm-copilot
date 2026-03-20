@@ -25,6 +25,33 @@ function getOpenAI() {
 }
 
 /**
+ * Helper to call Whisper API with automatic retries for stream connection errors
+ */
+async function callWhisperWithRetry(filePath: string, maxRetries = 3): Promise<string> {
+    let lastError: any;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        const audioStream = fs.createReadStream(filePath);
+        try {
+            const response = await getOpenAI().audio.translations.create({
+                file: audioStream,
+                model: 'whisper-1',
+                response_format: 'text',
+            });
+            return response as unknown as string;
+        } catch (error: any) {
+            lastError = error;
+            console.warn(`⚠️ Whisper API attempt ${attempt}/${maxRetries} failed: ${error.message}`);
+            if (attempt < maxRetries) {
+                await new Promise(r => setTimeout(r, attempt * 3000)); // Exponential-ish backoff
+            }
+        } finally {
+            audioStream.destroy();
+        }
+    }
+    throw lastError;
+}
+
+/**
  * Transcribe large audio file by splitting into chunks
  */
 async function transcribeLargeAudio(audioFilePath: string): Promise<string> {
@@ -54,27 +81,22 @@ async function transcribeLargeAudio(audioFilePath: string): Promise<string> {
             .sort()
             .map(f => path.join(chunkDir, f));
 
-        console.log(`🧩 Split into ${chunkFiles.length} chunks. Transcribing sequentially...`);
+        console.log(`🧩 Split into ${chunkFiles.length} chunks. Transcribing in parallel...`);
+        const startAll = Date.now();
 
-        let fullTranscript = '';
+        const results = await Promise.all(
+            chunkFiles.map(async (chunkPath, i) => {
+                const stats = fs.statSync(chunkPath);
+                console.log(`🎤 Chunk ${i + 1}: starting (${(stats.size/1024/1024).toFixed(2)} MB)...`);
+                const t = Date.now();
+                const text = await callWhisperWithRetry(chunkPath);
+                console.log(`✅ Chunk ${i + 1} done in ${Math.round((Date.now() - t)/1000)}s`);
+                return text;
+            })
+        );
 
-        for (let i = 0; i < chunkFiles.length; i++) {
-            const chunkPath = chunkFiles[i];
-            console.log(`🎤 Transcribing chunk ${i + 1}/${chunkFiles.length}...`);
-
-            // Transcribe each chunk
-            // Note: We call the API directly here to update progress
-            const audioStream = fs.createReadStream(chunkPath);
-            const response = await getOpenAI().audio.translations.create({
-                file: audioStream,
-                model: 'whisper-1',
-                response_format: 'text',
-            });
-
-            fullTranscript += response + ' ';
-        }
-
-        return fullTranscript.trim();
+        console.log(`✅ All ${chunkFiles.length} chunks transcribed in ${Math.round((Date.now() - startAll)/1000)}s`);
+        return results.join(' ').trim();
 
     } catch (error) {
         console.error('❌ Chunk transcription failed:', error);
@@ -113,20 +135,7 @@ export async function transcribeAudio(audioFilePath: string): Promise<string> {
             return await transcribeLargeAudio(audioFilePath);
         }
 
-        // Create a read stream from the audio file
-        const audioStream = fs.createReadStream(audioFilePath);
-
-        // Use translations endpoint — auto-detects Tamil/Tanglish and outputs English
-        let transcription: string;
-        try {
-            transcription = await getOpenAI().audio.translations.create({
-                file: audioStream,
-                model: 'whisper-1',
-                response_format: 'text',
-            }) as string;
-        } finally {
-            audioStream.destroy();
-        }
+        const transcription = await callWhisperWithRetry(audioFilePath);
 
         console.log('✅ Transcription completed');
         console.log(`📝 Transcript length: ${transcription.length} characters`);

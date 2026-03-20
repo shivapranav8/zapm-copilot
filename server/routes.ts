@@ -9,6 +9,12 @@ router.get('/health', (req, res) => {
     res.json({ status: 'ok' });
 });
 
+
+
+
+
+
+
 // Agents
 router.post('/mrd', async (req, res) => {
     try {
@@ -17,7 +23,7 @@ router.post('/mrd', async (req, res) => {
             return res.status(400).json({ error: 'Topic is required' });
         }
         console.log(`🧠 [Discovery] Thinking about: ${topic}`);
-        const data = await discoveryAgent(topic);
+        const data = await discoveryAgent(topic, (req as any).session?.zoho?.accessToken);
         res.json(data);
     } catch (error) {
         console.error('Error in Discovery Agent:', error);
@@ -33,7 +39,7 @@ router.post('/competitors', async (req, res) => {
     try {
         const { topic, productUrl } = req.body;
         console.log(`🧠 [Researcher] Thinking about: ${topic} (URL: ${productUrl})`);
-        const data = await competitorAgent(topic, productUrl);
+        const data = await competitorAgent(topic, productUrl, (req as any).session?.zoho?.accessToken);
         res.json(data);
     } catch (error) {
         console.error('Error in Competitor Agent:', error);
@@ -50,7 +56,7 @@ router.post('/design-prompt', async (req, res) => {
     try {
         const { topic, mrdData } = req.body;
         console.log(`🎨 [Design] Generating prompt for: ${topic}`);
-        const data = await designAgent(topic, mrdData);
+        const data = await designAgent(topic, mrdData, (req as any).session?.zoho?.accessToken);
         res.json(data);
     } catch (error) {
         console.error('Error in Design Agent:', error);
@@ -63,7 +69,7 @@ router.post('/prd', async (req, res) => {
         const { topic, mrdData, competitorData, images } = req.body;
         console.log(`📝 [Architect] Drafting PRD for: ${topic}`);
         console.log(`   Images provided: ${images ? images.length : 0}`);
-        const data = await prdAgent(topic, mrdData, competitorData, images);
+        const data = await prdAgent(topic, mrdData, competitorData, images, (req as any).session?.zoho?.accessToken);
         res.json(data);
     } catch (error) {
         console.error('Error in PRD Agent:', error);
@@ -82,7 +88,7 @@ router.post('/prd/use-cases', async (req, res) => {
             return res.status(400).json({ error: 'topic is required' });
         }
         console.log(`📋 [Use Cases] Generating for: ${topic}`);
-        const useCaseData = await generateUseCases(topic, mrdData, prdData);
+        const useCaseData = await generateUseCases(topic, mrdData, prdData, (req as any).session?.zoho?.accessToken);
         const xlsxBuffer = fillUseCasesSheet(useCaseData);
 
         const filename = `PRD_UseCases_${topic.replace(/[^a-z0-9]/gi, '_').substring(0, 40)}.xlsx`;
@@ -215,12 +221,13 @@ router.post('/meeting-mom/generate', async (req, res, next) => {
 
         console.log('📄 Transcript length:', finalTranscript?.length || 0, 'characters');
 
-        // Generate MoM
         const momData = await generateMeetingMoM({
             transcript: finalTranscript,
             meetingTitle,
             visualContext,
             meetingLink,
+            verbosity: 'brief',
+            zohoToken: (req as any).session?.zoho?.accessToken,
         });
 
         console.log('✅ MoM generated successfully');
@@ -238,6 +245,31 @@ router.post('/meeting-mom/generate', async (req, res, next) => {
     }
 });
 
+// POST /api/meeting-mom/regenerate-full
+router.post('/meeting-mom/regenerate-full', async (req, res) => {
+    try {
+        const { transcript, verbosity, meetingTitle } = req.body;
+        if (!transcript) {
+            return res.status(400).json({ error: 'transcript is required' });
+        }
+
+        console.log(`\n📝 Regenerating full MoM with verbosity: ${verbosity || 'brief'}`);
+
+        const momData = await generateMeetingMoM({
+            transcript,
+            meetingTitle,
+            verbosity: verbosity || 'brief',
+            zohoToken: (req as any).session?.zoho?.accessToken,
+        });
+
+        const storedMoM = await saveMoM(momData, transcript);
+        res.json(storedMoM);
+    } catch (error) {
+        console.error('❌ Error regenerating full MoM:', error);
+        res.status(500).json({ error: 'Failed to regenerate full MoM', details: error instanceof Error ? error.message : String(error) });
+    }
+});
+
 // POST /api/meeting-mom/regenerate-section
 router.post('/meeting-mom/regenerate-section', async (req, res) => {
     try {
@@ -246,11 +278,11 @@ router.post('/meeting-mom/regenerate-section', async (req, res) => {
             return res.status(400).json({ error: 'section and transcript are required' });
         }
 
-        const { ChatOpenAI } = await import('@langchain/openai');
-        const model = new ChatOpenAI({ modelName: 'gpt-4o', temperature: 0.3 });
+        const { callPlatformAI } = await import('./utils/platformAI.js');
+        const zohoToken = (req as any).session?.zoho?.accessToken;
 
         const verbosityGuide = verbosity === 'brief'
-            ? 'Be concise — 1-2 sentences per point.'
+            ? 'EXTREMELY CONCISE (Action-Oriented Pointers): Provide only sharp, single-line bullet points. Do NOT write paragraphs or descriptive fluff. **CRITICAL LIMIT: You MUST aggressively merge related points to output exactly 6 to 10 bullet points MAXIMUM per section.**'
             : verbosity === 'detailed'
             ? 'Be thorough — 4-6 sentences per discussion point, capture nuances, quotes, and specifics.'
             : 'Be descriptive — 3-4 sentences per discussion point, NEVER write one-liners or short labels.';
@@ -260,6 +292,13 @@ router.post('/meeting-mom/regenerate-section', async (req, res) => {
         let updatedFields: any = {};
 
         if (section === 'discussion') {
+            const ruleOverride = verbosity === 'brief'
+                ? '- KEY DISCUSSIONS RULES: Write extremely concise, 1-line action-oriented bullet points representing raw facts.'
+                : `- KEY DISCUSSIONS RULES (CRITICAL):
+- NEVER write a one-liner or a short label like "Feature X discussed."
+- Each entry must be a full paragraph covering: what was discussed, why it matters, concerns raised, and direction agreed.
+- If you cannot write 3 sentences about a topic, merge it with a related point.`;
+
             prompt = `You are a meeting minutes assistant. Using ONLY the transcript below, regenerate the Summary and Key Discussions.
 ${transcriptBlock}
 Meeting Title: ${meetingTitle || 'Team Meeting'}
@@ -267,19 +306,14 @@ Attendees: ${(attendees || []).join(', ')}
 
 Verbosity instruction: ${verbosityGuide}
 
-KEY DISCUSSIONS RULES (CRITICAL):
-- NEVER write a one-liner or a short label like "Feature X discussed."
-- Each entry must be a full paragraph covering: what was discussed, why it matters, concerns raised, and direction agreed.
-- If you cannot write 3 sentences about a topic, merge it with a related point.
-- BAD: "Data pipeline performance was discussed."
-- GOOD: "The team reviewed recent slowdowns in the data pipeline affecting daily report delivery times. It was noted that the bottleneck occurs during the transformation step when processing large fact tables, and two team members had independently observed this in their dashboards. The group agreed to profile the ETL job this week and consider adding incremental processing as a short-term fix."
+${ruleOverride}
 - Cover EVERY distinct topic raised in the transcript — do not skip any discussion point, no matter how brief.
 
 Return ONLY valid JSON (no markdown):
 { "summary": "string", "keyDiscussions": ["string", ...] }`;
 
-            const response = await model.invoke(prompt);
-            const clean = response.content.toString().replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+            const raw = await callPlatformAI(prompt, { temperature: 0.3, zohoToken });
+            const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
             const parsed = JSON.parse(clean);
             updatedFields = { summary: parsed.summary, keyDiscussions: parsed.keyDiscussions };
 
@@ -302,8 +336,8 @@ Return ONLY valid JSON (no markdown):
   "actionItems": [{ "id": "string", "task": "string", "assignee": "string", "dueDate": "Mon DD, YYYY or TBD", "priority": "High|Medium|Low", "status": "Pending|In Progress|Completed" }]
 }`;
 
-            const response = await model.invoke(prompt);
-            const clean = response.content.toString().replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+            const raw = await callPlatformAI(prompt, { temperature: 0.3, zohoToken });
+            const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
             const parsed = JSON.parse(clean);
             updatedFields = { decisions: parsed.decisions, actionItems: parsed.actionItems };
         } else {

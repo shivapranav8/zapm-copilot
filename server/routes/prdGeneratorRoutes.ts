@@ -84,23 +84,28 @@ function extractZipContent(zipPath: string): string {
         );
     }
 
-    // Build output up to char limit — feature files get priority
+    // Sort feature files by size descending — larger files are usually the primary feature components
+    featureFiles.sort((a, b) => b.content.length - a.content.length);
+
+    // Build output: include all files fully up to MAX_TOTAL
+    // Only truncate individual files if they alone exceed MAX_PER_FILE
     const sections: string[] = [];
     let totalChars = 0;
-    const MAX_CHARS = 250_000;
+    const MAX_TOTAL = 320_000;
+    const MAX_PER_FILE = 40_000;
 
-    for (const f of allFiles) {
-        const section = `\n=== FILE: ${f.path} ===\n${f.content}`;
+    for (const f of [...readmeFiles, ...appFiles, ...featureFiles]) {
+        const truncated = f.content.length > MAX_PER_FILE
+            ? f.content.slice(0, MAX_PER_FILE) + '\n// [truncated]'
+            : f.content;
+        const section = `\n=== FILE: ${f.path} ===\n${truncated}`;
+        if (totalChars + section.length > MAX_TOTAL) break;
         sections.push(section);
         totalChars += section.length;
-        if (totalChars >= MAX_CHARS) {
-            sections.push('\n[... truncated — file size limit reached ...]');
-            break;
-        }
     }
 
     const appSpecific = appFiles.length + featureFiles.length;
-    console.log(`📦 [PRD Generator] Extracted: ${readmeFiles.length} docs, ${appFiles.length} app files, ${featureFiles.length} feature files (${totalChars} chars total)`);
+    console.log(`📦 [PRD Generator] Extracted: ${readmeFiles.length} docs, ${appFiles.length} app files, ${featureFiles.length} feature files → ${sections.length} included (${totalChars} chars total)`);
 
     if (appSpecific <= 1) {
         console.warn(`⚠️  [PRD Generator] Very few app-specific files found (${appSpecific}). ZIP may be missing feature components.`);
@@ -153,7 +158,8 @@ prdGeneratorRouter.post('/generate', upload.single('file'), async (req, res) => 
         }
 
         // Step 2: Generate PRD JSON via AI
-        const prdData = await runPRDGenerator(content, originalname, sourceType);
+        const zohoToken = (req as any).session?.zoho?.accessToken;
+        const prdData = await runPRDGenerator(content, originalname, sourceType, zohoToken, req);
 
         // Step 3: Write Excel file
         const excelBuffer = await writePRDExcel(prdData);

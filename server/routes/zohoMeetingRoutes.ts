@@ -11,8 +11,8 @@ import { getJob } from '../utils/jobStore';
 export const zohoMeetingRouter = Router();
 
 const ACCOUNTS_BASE = 'https://accounts.zoho.in/oauth/v2';
-const MEETING_API_BASE = 'https://meeting.zohocorp.com/api/v2';
-const MEETING_RECORDINGS_BASE = 'https://meeting.zohocorp.com/meeting/api/v2';
+const MEETING_API_BASE = 'https://meeting.zoho.in/api/v2';
+const MEETING_RECORDINGS_BASE = 'https://meeting.zoho.in/meeting/api/v2';
 // Dynamic URIs constructed inside routes instead of globally using env constants
 
 // In-memory token store — seeded from .env
@@ -132,7 +132,7 @@ zohoMeetingRouter.get('/auth', (req, res) => {
     const params = new URLSearchParams({
         response_type: 'code',
         client_id: clientId,
-        scope: 'ZohoMeeting.meeting.READ,ZohoMeeting.recording.READ',
+        scope: 'ZohoMeeting.meeting.READ,ZohoMeeting.recording.READ,ZohoMeeting.meetinguds.READ,ZohoFiles.files.READ,ZohoMeeting.meeting.ALL,ZohoMeeting.recording.ALL',
         redirect_uri: mainRedirectUri,
         access_type: 'offline',
         prompt: 'consent',
@@ -455,12 +455,12 @@ zohoMeetingRouter.get('/recordings', async (req, res) => {
 // Streams SSE progress events so the HTTP connection stays open.
 // This prevents Vercel from freezing the CPU between requests.
 zohoMeetingRouter.post('/process', async (req, res) => {
-    const { recordingKey, downloadUrl, transcriptUrl, meetingTitle, detailed } = req.body as {
+    const { recordingKey, downloadUrl, transcriptUrl, meetingTitle, verbosity } = req.body as {
         recordingKey?: string;
         downloadUrl?: string;
         transcriptUrl?: string;
         meetingTitle?: string;
-        detailed?: boolean;
+        verbosity?: 'brief' | 'standard' | 'detailed';
     };
 
     if (!downloadUrl && !recordingKey) {
@@ -548,12 +548,26 @@ zohoMeetingRouter.post('/process', async (req, res) => {
             throw new Error('Download URL returned an HTML page instead of a video — the link may have expired. Please retry.');
         }
 
-        const buffer = await dlResponse.arrayBuffer();
-        fs.writeFileSync(tmpFile, Buffer.from(buffer));
-        const sizeMB = (buffer.byteLength / 1024 / 1024).toFixed(2);
+        if (!dlResponse.body) throw new Error('Download response has no body');
+        const fileStream = fs.createWriteStream(tmpFile);
+        const reader = dlResponse.body.getReader();
+        let sizeInBytes = 0;
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) {
+                fileStream.write(value);
+                sizeInBytes += value.length;
+            }
+        }
+        fileStream.end();
+        await new Promise(resolve => fileStream.on('finish', resolve));
+
+        const sizeMB = (sizeInBytes / 1024 / 1024).toFixed(2);
         console.log(`✅ Downloaded: ${sizeMB} MB`);
 
-        if (buffer.byteLength < 10000) {
+        if (sizeInBytes < 10000) {
             throw new Error(`Downloaded file is too small (${sizeMB} MB) — likely not a real video file. The URL may have expired.`);
         }
 
@@ -563,7 +577,35 @@ zohoMeetingRouter.post('/process', async (req, res) => {
         send({ status: 'processing', progress: 45, message: 'Transcribing audio with Whisper...' });
         console.log('🎙️  Transcribing with Whisper...');
 
-        const result = await transcribeVideo(tmpFile);
+        // Heartbeat: tick progress from 45→78% while Whisper runs so the UI doesn't stall
+        let heartbeatProgress = 45;
+        const transcribeMessages = [
+            'Transcribing audio with Whisper...',
+            'Processing speech to text...',
+            'Transcribing audio with Whisper...',
+            'Still transcribing — large recordings take a moment...',
+            'Processing speech to text...',
+            'Almost done transcribing...',
+        ];
+        let heartbeatTick = 0;
+        const heartbeat = setInterval(() => {
+            if (heartbeatProgress < 78) {
+                heartbeatProgress = Math.min(78, heartbeatProgress + 4);
+                send({
+                    status: 'processing',
+                    progress: heartbeatProgress,
+                    message: transcribeMessages[heartbeatTick % transcribeMessages.length],
+                });
+                heartbeatTick++;
+            }
+        }, 10000); // every 10s
+
+        let result: { transcript: string; audioPath: string };
+        try {
+            result = await transcribeVideo(tmpFile);
+        } finally {
+            clearInterval(heartbeat);
+        }
         transcript = result.transcript;
 
         // Dots-only transcript = Whisper detected silence — audio track was empty
@@ -599,7 +641,8 @@ zohoMeetingRouter.post('/process', async (req, res) => {
         const momData = await generateMeetingMoM({
             transcript,
             meetingTitle: meetingTitle || 'Zoho Meeting Recording',
-            detailed,
+            verbosity: verbosity || 'brief',
+            zohoToken: resolveToken(req),
         });
 
         send({ status: 'processing', progress: 97, message: 'Saving...' });

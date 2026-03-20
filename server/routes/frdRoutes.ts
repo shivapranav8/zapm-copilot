@@ -66,7 +66,8 @@ frdRouter.post('/review', upload.single('file'), async (req, res) => {
         send({ status: 'processing', progress: 30, message: `Content extracted (${content.length.toLocaleString()} chars). Starting AI review...` });
         send({ status: 'processing', progress: 50, message: 'Analyzing feature completeness, user flows, and edge cases...' });
 
-        const auditData = await runFRDReview(content, originalname);
+        const zohoToken = (req as any).session?.zoho?.accessToken;
+        const auditData = await runFRDReview(content, originalname, zohoToken, req);
 
         send({ status: 'processing', progress: 95, message: 'Finalizing audit report...' });
         send({ status: 'done', progress: 100, message: 'Done!', result: auditData });

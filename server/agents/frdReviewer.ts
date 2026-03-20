@@ -1,9 +1,7 @@
-import Anthropic from '@anthropic-ai/sdk';
-import { ChatOpenAI } from '@langchain/openai';
+import type { Request } from 'express';
+import { jsonrepair } from 'jsonrepair';
+import { callPlatformAI } from '../utils/platformAI';
 import { AuditData, AuditIssue } from '../types/frdTypes';
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const openai = new ChatOpenAI({ modelName: 'gpt-4o', temperature: 0 });
 
 const FRD_REVIEWER_SYSTEM_PROMPT = `You are a senior Product Manager reviewing a Functional Requirements Document (FRD/PRD) written by an Associate Product Manager (APM).
 
@@ -138,41 +136,115 @@ IMPORTANT: Do NOT summarize what IS present. Only flag what is MISSING or undefi
 Aim for 15-25 issues. Prioritize lifecycle gaps (Category 1) and role gaps (Category 2) above all else.
 Any phrase like "should work", "as expected", or "without any issue" in a UC is always a critical gap.`;
 
-export async function runFRDReview(fileContent: string, fileName: string): Promise<AuditData> {
-    console.log(`🔍 [FRD Reviewer] Analyzing: ${fileName} (${fileContent.length} chars)`);
+// ── helpers ──────────────────────────────────────────────────────────────────
 
-    const userMessage = `Review this FRD document and identify all gaps, missing use cases, and ambiguities.\n\nFile: ${fileName}\n\n---\n\n${fileContent}`;
-    let raw: string;
+function parseIssues(raw: string): any[] {
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (!match) return [];
+    let str = match[0];
+    try { return JSON.parse(str); } catch { /* fall through */ }
+    try { return JSON.parse(jsonrepair(str)); } catch { return []; }
+}
 
-    // Try Anthropic (claude-sonnet-4-6) first, fall back to GPT-4o
+function buildCategoryPrompt(
+    category: string,
+    instructions: string,
+    outputRules: string,
+    fileContent: string,
+    fileName: string
+): string {
+    return `You are a senior Product Manager reviewing an FRD/PRD written by an APM.
+Focus ONLY on: ${category}
+
+${instructions}
+
+---
+File: ${fileName}
+${fileContent}
+---
+
+${outputRules}
+
+Return ONLY a valid JSON array of issues (no markdown, no extra text):
+[
+  {
+    "id": "string (e.g. C1-001)",
+    "severity": "critical" | "warning" | "info",
+    "category": "${category}",
+    "location": "string (UC number or sheet name)",
+    "issue": "string — specific named gap",
+    "detail": "string",
+    "suggestion": "string"
+  }
+]`;
+}
+
+// ── main export ───────────────────────────────────────────────────────────────
+
+export async function runFRDReview(fileContent: string, fileName: string, zohoToken?: string, req?: Request): Promise<AuditData> {
+    console.log(`🔍 [FRD Reviewer] Analyzing: ${fileName} (${fileContent.length} chars) — 3 parallel calls`);
+
+    // ── Call 1: Feature Lifecycle (verbose, up to 10 issues) ──────────────────
+    const lifecyclePrompt = buildCategoryPrompt(
+        'Feature Lifecycle Completeness',
+        `For every primary entity in the FRD, check if Create, View/List, View Detail, Edit, Delete, Duplicate, Archive, and Status Transitions are documented.
+For each lifecycle step present — verify it has: trigger → steps → success state → failure/error state → role permission.
+Flag every missing step as critical. Flag every incomplete step (missing error path, missing role, etc.) as critical or warning.`,
+        `Write detailed issues — 2-3 sentence detail, full UC text in suggestion. Aim for 12-15 issues. Severity: critical if the lifecycle step is entirely missing; warning if documented but incomplete.`,
+        fileContent, fileName
+    );
+
+    // ── Call 2: Role & Permission Coverage (verbose, up to 8 issues) ──────────
+    const rolesPrompt = buildCategoryPrompt(
+        'Role & Permission Coverage',
+        `For every action (create, edit, delete, view, share, export, follow, pin, etc.), check if there is a UC for EACH distinct role (Admin, Non-admin, Viewer, Shared user).
+For restricted roles: is it stated whether the button is hidden, disabled, or shows an error?
+"May be restricted" or "subject to permissions" is NEVER acceptable.`,
+        `Write detailed issues — 2-3 sentence detail, exact missing UC in suggestion. Aim for 8-12 issues. Severity: critical if a role has NO defined behavior for an action.`,
+        fileContent, fileName
+    );
+
+    // ── Call 3: Categories 3–8 combined (concise, up to 3 issues each) ────────
+    const otherPrompt = buildCategoryPrompt(
+        'Incomplete User Flows | Empty & Zero States | Scope & Data Ownership | Cross-Feature Interactions | Filter & Search Logic | Document Completeness',
+        `Check all 6 of these areas:
+3. Incomplete User Flows — missing success/failure/cancel paths, missing form field specs
+4. Empty & Zero States — first-use state, no-results state, section-specific empty states
+5. Scope & Data Ownership — is data scoped to current user or all users? Are "recently" windows defined?
+6. Cross-Feature Interactions — search+filter together, delete from multi-section, follow/pin timing
+7. Filter & Search Logic — AND/OR logic, date range combinations, filter persistence
+8. Document Completeness — TBDs, vague language ("should work", "as expected"), missing error handling entries`,
+        `Be concise — 1-2 sentence detail, short suggestion. Find up to 5 issues per area (30 max total). Use category names exactly as listed above.`,
+        fileContent, fileName
+    );
+
+    console.log('🤖 [FRD Reviewer] Running 3 parallel PlatformAI calls...');
+    const [rawLifecycle, rawRoles, rawOther] = await Promise.all([
+        callPlatformAI(lifecyclePrompt, { temperature: 0, zohoToken, req }),
+        callPlatformAI(rolesPrompt, { temperature: 0, zohoToken, req }),
+        callPlatformAI(otherPrompt, { temperature: 0, zohoToken, req }),
+    ]);
+    console.log(`✅ [FRD Reviewer] All 3 calls done. Lengths: ${rawLifecycle.length} / ${rawRoles.length} / ${rawOther.length}`);
+
+    const lifecycleIssues = parseIssues(rawLifecycle);
+    const rolesIssues = parseIssues(rawRoles);
+    const otherIssues = parseIssues(rawOther);
+
+    console.log(`📊 [FRD Reviewer] Issues — lifecycle: ${lifecycleIssues.length} | roles: ${rolesIssues.length} | other: ${otherIssues.length}`);
+
+    // Get meta (featureName, sheet count, UC count) — no score, we compute it ourselves
+    const metaPrompt = `You are reviewing an FRD. Given the file below, return ONLY this JSON (no markdown):
+{"featureName":"string","totalSheets":number,"totalUseCases":number}
+File: ${fileName}\n${fileContent.slice(0, 2000)}`;
+
+    let meta = { featureName: fileName, totalSheets: 1, totalUseCases: 0 };
     try {
-        console.log('🤖 [FRD Reviewer] Using Claude (claude-sonnet-4-6)...');
-        const message = await anthropic.messages.create({
-            model: 'claude-sonnet-4-6',
-            max_tokens: 16000,
-            system: FRD_REVIEWER_SYSTEM_PROMPT,
-            messages: [{ role: 'user', content: userMessage }],
-        });
-        raw = (message.content[0] as any).text as string;
-        console.log('✅ [FRD Reviewer] Claude responded');
-    } catch (claudeErr: any) {
-        console.warn(`⚠️  [FRD Reviewer] Claude failed (${claudeErr?.message?.slice(0, 80)}), falling back to GPT-4o...`);
-        const response = await openai.invoke([
-            { role: 'system', content: FRD_REVIEWER_SYSTEM_PROMPT },
-            { role: 'user', content: userMessage },
-        ]);
-        raw = response.content as string;
-        console.log('✅ [FRD Reviewer] GPT-4o responded');
-    }
-    console.log(`✅ [FRD Reviewer] Response received (${raw.length} chars)`);
+        const rawMeta = await callPlatformAI(metaPrompt, { temperature: 0, zohoToken, req });
+        const metaMatch = rawMeta.match(/\{[\s\S]*\}/);
+        if (metaMatch) meta = { ...meta, ...JSON.parse(jsonrepair(metaMatch[0])) };
+    } catch { /* meta is non-critical */ }
 
-    // Extract JSON from response
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('Claude did not return valid JSON');
-
-    const parsed = JSON.parse(jsonMatch[0]);
-
-    const issues: AuditIssue[] = (parsed.issues || []).map((item: any, idx: number) => ({
+    const allIssues: AuditIssue[] = [...lifecycleIssues, ...rolesIssues, ...otherIssues].map((item: any, idx: number) => ({
         id: item.id || String(idx + 1),
         severity: item.severity || 'warning',
         category: item.category || 'General',
@@ -183,17 +255,22 @@ export async function runFRDReview(fileContent: string, fileName: string): Promi
         status: 'open' as const,
     }));
 
-    const critical = issues.filter(i => i.severity === 'critical').length;
-    const warnings = issues.filter(i => i.severity === 'warning').length;
-    const info = issues.filter(i => i.severity === 'info').length;
+    const critical = allIssues.filter(i => i.severity === 'critical').length;
+    const warnings = allIssues.filter(i => i.severity === 'warning').length;
+    const info = allIssues.filter(i => i.severity === 'info').length;
+
+    // Compute score from actual issues — not from AI opinion
+    // Start at 100, deduct: critical = 4pts, warning = 1.5pts, info = 0.5pts. Floor at 10.
+    const rawScore = 100 - (critical * 4) - (warnings * 1.5) - (info * 0.5);
+    const score = Math.max(10, Math.min(100, Math.round(rawScore)));
 
     return {
         fileName,
         analyzedDate: new Date().toLocaleDateString(),
-        totalSheets: parsed.totalSheets || 1,
-        totalUseCases: parsed.totalUseCases || 0,
-        score: parsed.score || 0,
-        issues,
+        totalSheets: meta.totalSheets,
+        totalUseCases: meta.totalUseCases,
+        score,
+        issues: allIssues,
         summary: { critical, warnings, info },
     };
 }

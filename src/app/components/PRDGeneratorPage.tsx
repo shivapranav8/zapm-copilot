@@ -26,6 +26,43 @@ function saveHistory(items: HistoryItem[]): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(items.slice(0, 20)));
 }
 
+const PRD_MESSAGES = [
+  'Parsing your file...',
+  'Identifying features and use cases...',
+  'Analyzing feature completeness, user flows, and edge cases...',
+  'Writing use case descriptions...',
+  'Structuring PRD sheets...',
+  'Almost done...',
+];
+
+function PRDLoadingState() {
+  const [msgIndex, setMsgIndex] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setMsgIndex(i => (i + 1) % PRD_MESSAGES.length);
+    }, 4000);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div className="flex items-center justify-center h-full">
+      <div className="w-full max-w-sm px-8 text-center">
+        <div className="relative w-16 h-16 mx-auto mb-6">
+          <div className="w-16 h-16 bg-gradient-to-br from-indigo-600 to-violet-600 rounded-full flex items-center justify-center shadow-lg">
+            <FileText className="w-8 h-8 text-white" />
+          </div>
+          <svg className="absolute inset-0 w-16 h-16 animate-spin" viewBox="0 0 64 64">
+            <circle cx="32" cy="32" r="30" fill="none" stroke="#6366f1" strokeWidth="3" strokeDasharray="40 150" strokeLinecap="round" />
+          </svg>
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900 mb-2">🤖 Generating PRD...</h3>
+        <p className="text-sm text-gray-500 min-h-[20px] transition-all duration-500">{PRD_MESSAGES[msgIndex]}</p>
+      </div>
+    </div>
+  );
+}
+
 export function PRDGeneratorPage({ onBack, onUpload, prdData, isGenerating }: PRDGeneratorPageProps) {
   const [showUpload, setShowUpload] = useState(!prdData);
   const [history, setHistory] = useState<HistoryItem[]>(loadHistory);
@@ -127,15 +164,7 @@ export function PRDGeneratorPage({ onBack, onUpload, prdData, isGenerating }: PR
       {/* Main Content Area */}
       <div className="flex-1 overflow-y-auto">
         {isGenerating ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center">
-              <div className="w-20 h-20 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Loader2 className="w-10 h-10 text-indigo-600 animate-spin" />
-              </div>
-              <h3 className="text-lg font-medium text-gray-900 mb-2">Generating PRD...</h3>
-              <p className="text-sm text-gray-500">Claude is analyzing your file and writing the 8-sheet PRD.<br />This usually takes 30–60 seconds.</p>
-            </div>
-          </div>
+          <PRDLoadingState />
         ) : showUpload ? (
           <div className="max-w-3xl mx-auto p-8">
             <ZipUpload

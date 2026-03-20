@@ -197,24 +197,22 @@ export function FRDAuditPage({ onBack, onSubmit, auditData, isLoading = false, p
           </div>
         ) : isLoading ? (
           <div className="flex items-center justify-center h-full">
-            <div className="w-full max-w-md px-8 text-center">
-              <div className="w-16 h-16 bg-gradient-to-br from-green-600 to-lime-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg">
-                <FileCheck className="w-8 h-8 text-white" />
+            <div className="w-full max-w-sm px-8 text-center">
+              <div className="relative w-16 h-16 mx-auto mb-6">
+                <div className="w-16 h-16 bg-gradient-to-br from-green-600 to-lime-600 rounded-full flex items-center justify-center shadow-lg">
+                  <FileCheck className="w-8 h-8 text-white" />
+                </div>
+                <svg className="absolute inset-0 w-16 h-16 animate-spin" viewBox="0 0 64 64">
+                  <circle cx="32" cy="32" r="30" fill="none" stroke="#16a34a" strokeWidth="3" strokeDasharray="40 150" strokeLinecap="round" />
+                </svg>
               </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-1">
-                {progress < 35 ? 'Extracting file content...' : progress < 70 ? 'Running AI review...' : 'Finalizing report...'}
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                {progress < 35 ? 'Loading...' : 'Running AI review...'}
               </h3>
-              <p className="text-sm text-gray-500 mb-6">{progressMessage || 'Please wait...'}</p>
-              <div className="w-full bg-gray-200 rounded-full h-2.5 mb-3 overflow-hidden">
-                <div
-                  className="h-2.5 rounded-full bg-gradient-to-r from-green-600 to-lime-500 transition-all duration-700 ease-out"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-              <div className="flex justify-between text-xs text-gray-400">
-                <span>{progress}%</span>
-                <span>{progress < 35 ? '📄 Reading' : progress < 70 ? '🤖 Analyzing' : '✅ Finalizing'}</span>
-              </div>
+              <p className="text-sm text-gray-500 mb-4 min-h-[20px]">{progressMessage || 'Please wait...'}</p>
+              {progress >= 95 && (
+                <span className="inline-block text-sm font-medium text-green-600">Almost done...</span>
+              )}
             </div>
           </div>
         ) : displayedAudit ? (

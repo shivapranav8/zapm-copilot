@@ -1,41 +1,35 @@
-import { ChatOpenAI } from '@langchain/openai';
 import { z } from 'zod';
+import { callPlatformAI } from '../utils/platformAI';
 
 const preambleSchema = z.object({
-    whatItIs: z.string().describe('What is this feature? 2–3 sentence overview of its purpose and value'),
-    triggeredFrom: z.string().describe('Where in the product this feature is accessed (navigation path)'),
-    whoCanTrigger: z.string().describe('User roles or personas who can access/trigger this feature'),
-    successMetrics: z.string().describe('Key success metrics (comma-separated) to measure adoption and impact'),
+    whatItIs: z.string(),
+    triggeredFrom: z.string(),
+    whoCanTrigger: z.string(),
+    successMetrics: z.string(),
 });
 
 const useCaseRowSchema = z.object({
-    sNo: z.string().describe('Sequential number like "1", "2", etc.'),
-    useCase: z.string().describe('Short title of the use case (e.g. "Creating a Report", "Editing Filters")'),
-    description: z.string().describe('Detailed description of the use case including steps, UI behavior, and outcomes. Be thorough.'),
-    pmNotes: z.string().describe('PM perspective: edge cases, business rules, dependencies, follow-ups, phasing'),
-    developerNotes: z.string().describe('Developer perspective: API considerations, performance, technical constraints, data handling'),
-    qaNotes: z.string().describe('QA perspective: test scenarios, boundary conditions, regression areas, validation checks'),
+    sNo: z.string(),
+    useCase: z.string(),
+    description: z.string(),
+    pmNotes: z.string(),
+    developerNotes: z.string(),
+    qaNotes: z.string(),
 });
 
 const useCaseOutputSchema = z.object({
-    featureName: z.string().describe('Full name of the feature being documented'),
+    featureName: z.string(),
     preamble: preambleSchema,
-    useCases: z.array(useCaseRowSchema).describe('Array of use cases covering all major user journeys for this feature'),
+    useCases: z.array(useCaseRowSchema),
 });
 
 export type UseCaseOutput = z.infer<typeof useCaseOutputSchema>;
-
-const model = new ChatOpenAI({
-    modelName: 'gpt-4o',
-    temperature: 0.3,
-});
-
-const structuredModel = model.withStructuredOutput(useCaseOutputSchema);
 
 export async function generateUseCases(
     topic: string,
     mrdData?: any,
     prdData?: any,
+    zohoToken?: string,
 ): Promise<UseCaseOutput> {
     console.log(`\n📋 [Use Case Agent] Generating use cases for: ${topic}`);
 
@@ -46,8 +40,7 @@ export async function generateUseCases(
             : JSON.stringify(prdData, null, 2).substring(0, 2000))
         : 'Not provided';
 
-    const result = await structuredModel.invoke(`
-You are a Senior Product Manager writing a Use Cases sheet for a PRD.
+    const prompt = `You are a Senior Product Manager writing a Use Cases sheet for a PRD.
 
 Feature / Topic: "${topic}"
 
@@ -79,9 +72,35 @@ For each use case:
 - **Developer Notes**: API design considerations, performance concerns, data models, technical constraints
 - **QA Notes**: Test scenarios, boundary conditions, validation rules, regression areas
 
-Aim for 8–15 use cases minimum. Be thorough and specific to "${topic}" in the context of Zoho Analytics.
-`);
+Aim for 8-15 use cases minimum. Be thorough and specific to "${topic}" in the context of Zoho Analytics.
 
-    console.log(`✅ [Use Case Agent] Generated ${result.useCases.length} use cases`);
+Return ONLY valid JSON with this exact structure:
+{
+  "featureName": "string",
+  "preamble": {
+    "whatItIs": "string",
+    "triggeredFrom": "string",
+    "whoCanTrigger": "string",
+    "successMetrics": "string"
+  },
+  "useCases": [
+    {
+      "sNo": "1",
+      "useCase": "string",
+      "description": "string",
+      "pmNotes": "string",
+      "developerNotes": "string",
+      "qaNotes": "string"
+    }
+  ]
+}`;
+
+    const raw = await callPlatformAI(prompt, { temperature: 0.3, zohoToken });
+
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('Use case agent did not return valid JSON');
+    const result = JSON.parse(jsonMatch[0]);
+
+    console.log(`✅ [Use Case Agent] Generated ${result.useCases?.length || 0} use cases`);
     return result;
 }

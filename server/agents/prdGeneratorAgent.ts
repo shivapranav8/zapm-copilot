@@ -1,8 +1,6 @@
-import Anthropic from '@anthropic-ai/sdk';
-import { ChatOpenAI } from '@langchain/openai';
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const openai = new ChatOpenAI({ modelName: 'gpt-4o', temperature: 0.2 });
+import type { Request } from 'express';
+import { jsonrepair } from 'jsonrepair';
+import { callPlatformAI } from '../utils/platformAI';
 
 export interface PRDUseCase {
     type: 'section' | 'usecase';
@@ -75,20 +73,38 @@ B) A Marketing Requirements Document (MRD) — expand into a full, granular func
 6. Identify every conditional render: empty state, loading state, error state, success state, edit mode vs view mode
 
 ### Rule 3b: DESCRIPTION FORMAT — MANDATORY FOR ALL USE CASES
-Every single UC description MUST be written in numbered step format. No one-liners. No vague summaries.
+Every single UC description MUST be written in numbered step format from the USER'S perspective. No one-liners. No vague summaries.
 
-**Required format:**
-1. [Trigger — what the user clicks/does, with exact button/component name from code]
-2. [System response — what renders, what state changes, what component shows]
-3. [Sub-step if needed]
-4. [End state — what the user sees when the action completes]
-Note: [Any constraint, validation, or exception]
+**Required format — use \n wherever a line break is needed in the JSON string:**
+"1. [Trigger]\n2. [System response]\n3. [Sub-step if needed — if listing items, use bullets on separate lines]\n4. End state: [What the user sees]\nNote: [Any constraint or open PM decision]"
 
-**BAD** (rejected): "User clicks star icon to toggle follow state of a metric."
-**GOOD** (required): "1. User clicks the star (☆) icon on a metric card. 2. System toggles the isFollowed state for that metric. 3. The star icon fills (★) to indicate followed state. 4. End state: The metric appears in the 'Followed' section on next view. Note: Follow state persistence (session vs. backend) must be confirmed with dev."
+Use \n:
+- Between every numbered step
+- Between a sentence and a bullet list that follows it
+- Between individual bullet points
+- Between any two logical chunks that should be visually separated
+
+Never write all content as one run-on paragraph. Never omit \n just to save space.
+
+**STRICT BAN — NEVER include these in any UC description:**
+- React component names in angle brackets: NEVER write <AgentBuilderPage>, <ConfigurationPanel>, <Modal>, etc.
+- CSS class names: NEVER write w-[500px], transition-all, border-gray-200, overflow-hidden, etc.
+- State variable names: NEVER write isNewlyCreated, isPanelOpen, useState, useEffect, etc.
+- Code observations: NEVER write "In the current code", "renders null", "return null", "the prop interface shows", etc.
+- TypeScript syntax: NEVER write prop types, interface names, or camelCase variable names from the code
+
+**Translate implementation → user-facing behavior:**
+- isPanelOpen=true → "The configuration panel is visible on the right side"
+- w-[500px] → "The panel expands to full width"
+- isNewlyCreated=true → "When the agent is first created"
+- transition-all duration-300 → "The panel animates open/closed"
+- return null → "This panel is not yet implemented in this version"
+
+**BAD** (rejected): "In AgentBuilderPage, the Configuration Panel starts expanded (w-[500px]) if isNewlyCreated=true. The panel's width transitions with CSS: transition-all duration-300."
+**GOOD** (required): "1. When a user creates a new agent, the Configuration Panel on the right side opens automatically. 2. When a user opens an existing agent, the panel starts collapsed. 3. The user clicks the collapse/expand toggle in the panel header to show or hide it. 4. End state: The panel slides open or closed with a smooth animation. Note: Confirm whether the panel open/close state persists per agent or resets on every visit."
 
 **BAD** (rejected): "Delete functionality not implemented in this version."
-**GOOD** (required): "1. [If a Delete button/icon exists in the code] User clicks the delete icon. 2. [If confirmation dialog exists] A confirmation dialog appears with text: '[exact text from code or describe expected behavior]. 3. [If no delete in code] Delete is not implemented in this prototype — the expected behavior (confirmation dialog, soft delete vs hard delete, recovery option) must be defined before implementation."
+**GOOD** (required): "1. [If a Delete button/icon exists] User clicks the delete icon on the item. 2. A confirmation dialog appears asking the user to confirm deletion. 3. User clicks 'Delete' to confirm or 'Cancel' to abort. 4. End state: Item is removed from the list and a success toast is shown. Note: Delete is not implemented in this prototype — the expected behavior (confirmation copy, soft vs hard delete, recovery option) must be defined before implementation."
 
 ### Rule 4: MANDATORY USE CASE CHECKLIST
 For the PRIMARY feature, you MUST generate a use case for EACH of the following — no exceptions:
@@ -212,7 +228,7 @@ Respond ONLY with valid JSON:
       "type": "usecase",
       "sno": "2.0",
       "useCase": "Where is it triggered?",
-      "description": "List every UI entry point with exact navigation path, referencing actual component/element names found in the code. E.g.: 'User clicks [FeatureName] in the [navigation element]. The <[PrimaryComponent]> renders in the main content area.'",
+      "description": "List every UI entry point with exact navigation path in plain English. E.g.: 'User clicks [FeatureName] in the left navigation sidebar. The [Feature Name] page loads in the main content area.'",
       "pmNotes": ""
     },
     {
@@ -227,7 +243,7 @@ Respond ONLY with valid JSON:
       "type": "usecase",
       "sno": "4.0",
       "useCase": "List [Entities]",
-      "description": "1. User navigates to [FeatureName]. 2. The <[PrimaryComponent]> renders in the main content area. 3. All [entities] are displayed in [grid/list/table] view. Each item shows: [list ALL fields visible — from code props/types]. 4. Default sort: [e.g., by creation date, alphabetical, status]. Pagination: [e.g., 20 per page / infinite scroll / no pagination — infer from code]. 5. End state: User sees all [entities] with action buttons [list buttons shown on each item].",
+      "description": "1. User navigates to [FeatureName]. 2. The [Feature Name] page loads in the main content area. 3. All [entities] are displayed in [grid/list/table] view. Each item shows: [list ALL fields visible in plain English]. 4. Default sort: [e.g., by creation date, alphabetical, status]. Pagination: [e.g., 20 per page / infinite scroll / no pagination — infer from code]. 5. End state: User sees all [entities] with action buttons [list buttons shown on each item].",
       "pmNotes": ""
     },
     {
@@ -263,7 +279,7 @@ Respond ONLY with valid JSON:
       "type": "usecase",
       "sno": "9.0",
       "useCase": "USE EXACT INTERACTION NAME FROM CODE (e.g., 'Toggle Grid/List View', 'Generate AI Insights', 'View Status Bar')",
-      "description": "1. [Trigger — exact button/element the user interacts with, with label from code]. 2. [What the system renders / state that changes — reference component name and state variable]. 3. [Any sub-steps]. 4. End state: [What the user sees after the action completes]. Note: [Any constraint, default value, or open question].",
+      "description": "1. [Trigger — what button/link the user clicks, in plain English]. 2. [What the user sees happen on screen — no component names, no CSS classes]. 3. [Any sub-steps]. 4. End state: [What the user sees after the action completes]. Note: [Any constraint, default value, or open decision for PM].",
       "pmNotes": ""
     },
     { "type": "section", "sectionName": "Edge Cases" }
@@ -280,7 +296,7 @@ Respond ONLY with valid JSON:
     {
       "module": "string",
       "subModule": "string",
-      "areasAffected": "string — one specific component per row (e.g., '[PrimaryComponent] — list view, item detail modal, create/edit form')",
+      "areasAffected": "string — one specific feature area per row (e.g., 'Agent Listing Page — list view, search, filters, create button')",
       "dependency": "string — specific regression tests QA must run"
     }
     // one row per component — see Rule 7
@@ -297,7 +313,9 @@ Respond ONLY with valid JSON:
 export async function runPRDGenerator(
     fileContent: string,
     fileName: string,
-    sourceType: 'zip' | 'docx'
+    sourceType: 'zip' | 'docx',
+    zohoToken?: string,
+    req?: Request
 ): Promise<PRDSheetData> {
     console.log(`🏗️  [PRD Generator] Analyzing: ${fileName} (${fileContent.length} chars, type=${sourceType})`);
 
@@ -305,60 +323,104 @@ export async function runPRDGenerator(
         ? 'React/TypeScript source code extracted from a ZIP file'
         : 'Marketing Requirements Document (MRD) from a DOCX file';
 
-    const userMessage = `Source type: ${sourceDesc}
+    // Content already capped at 200K by the route-level extractor
+    const contentSlice = fileContent;
+    // Supporting call only needs enough to identify components/modules — first 60K is plenty
+    const contentSummary = fileContent.slice(0, 60_000);
+
+    const contextBlock = `Source type: ${sourceDesc}
 File: ${fileName}
 
-CHECKLIST BEFORE GENERATING — verify each of these before writing the JSON:
-□ Identified the PRIMARY feature (not the app shell, sidebar, or utility components)
-□ Will ONLY write use cases for the primary feature
-□ Will generate empty state UCs for every list/section
-□ Will generate separate UCs for each user role (no "may be restricted")
-□ Will specify all modal/form fields with required/optional and validation
-□ Will generate UCs for: edit mode + navigation-away, new item + follow state, counter clicks, duplicate detection
-□ Will generate loading state UCs
-□ Will generate 5+ error handling entries
-□ Will write one affected area row per component
-□ Will generate 3+ limitations
-□ All overview team name fields = ""
+--- CONTENT START ---
+${contentSlice}
+--- CONTENT END ---`;
+
+    const supportingContext = `Source type: ${sourceDesc}
+File: ${fileName}
 
 --- CONTENT START ---
-${fileContent.slice(0, 80000)}
---- CONTENT END ---
+${contentSummary}
+--- CONTENT END ---`;
 
-Now generate the PRD JSON following ALL rules above.`;
+    // ── Call 1: Use Cases (sections + all UCs) ────────────────────────────────
+    const useCasesPrompt = `${SYSTEM_PROMPT}
 
-    let raw: string;
+${contextBlock}
 
-    try {
-        console.log('🤖 [PRD Generator] Using Claude (claude-sonnet-4-6)...');
-        const message = await anthropic.messages.create({
-            model: 'claude-sonnet-4-6',
-            max_tokens: 16000,
-            system: SYSTEM_PROMPT,
-            messages: [{ role: 'user', content: userMessage }],
-        });
-        raw = (message.content[0] as any).text as string;
-        console.log(`✅ [PRD Generator] Claude responded (${raw.length} chars)`);
-    } catch (err: any) {
-        console.warn(`⚠️  [PRD Generator] Claude failed (${err?.message?.slice(0, 80)}), falling back to GPT-4o...`);
-        const response = await openai.invoke([
-            { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: userMessage },
-        ]);
-        raw = response.content as string;
-        console.log(`✅ [PRD Generator] GPT-4o responded (${raw.length} chars)`);
+TASK: Generate ONLY the use cases portion. Return ONLY a valid JSON object with these fields:
+{
+  "featureName": "string",
+  "module": "string",
+  "subModule": "string",
+  "overview": { "pmOwner": "", "developers": "", "uiOwner": "", "qaMembers": "", "documentationOwner": "" },
+  "useCases": [ ...full use cases array following ALL rules above... ]
+}
+No errorHandling, affectedAreas, or limitations in this response.
+
+IMPORTANT — UC COUNT: There is NO limit on the number of use cases. Generate as many as needed to cover EVERY interaction in the code. Do NOT stop early. Cover every lifecycle step, every role variant, every empty state, every loading state, every modal, every toggle, every filter, every cross-feature interaction.
+
+IMPORTANT — FORMATTING: Use \\n wherever you want a line break in a description — between numbered steps, between a paragraph and a bullet list, between bullet points. Never write everything as one run-on paragraph. Examples:
+- Between steps: "1. User clicks Save.\\n2. A confirmation dialog appears."
+- Paragraph then bullets: "The form contains the following fields:\\n- Agent Name (required)\\n- Description (optional)\\n- Model (required)"
+- Mixed: "1. User opens the schema panel.\\n2. The panel shows:\\n- A search bar\\n- A Select All checkbox\\n- A scrollable table list\\n3. User selects tables and clicks Deploy."`;
+
+    // ── Call 2: Error Handling + Affected Areas + Limitations ─────────────────
+    // Uses a shorter context slice — these sections don't need the full code
+    const supportingPrompt = `You are a Senior PM at Zoho Analytics writing a PRD. Based on the source code below, generate ONLY the supporting sections.
+
+${supportingContext}
+
+Return ONLY valid JSON with these fields (no featureName, useCases, or overview):
+{
+  "errorHandling": [
+    { "errorCase": "string", "content": "Title: ...\\n\\nContent: ...\\n\\nHelp doc link: NA\\n\\nVideo link: NA" }
+  ],
+  "affectedAreas": [
+    { "module": "string", "subModule": "string", "areasAffected": "string", "dependency": "string" }
+  ],
+  "limitations": [
+    { "limitation": "string", "comments": "string" }
+  ]
+}
+
+Rules:
+- errorHandling: minimum 5 entries (data fetch failure, save failure, create failure, permission error, + feature-specific errors)
+- affectedAreas: one row per distinct component/area found in code
+- limitations: minimum 3 entries (things NOT built — e.g. no real-time, no export, no mobile, prototype-only)`;
+
+    console.log('🤖 [PRD Generator] Running 2 parallel PlatformAI calls...');
+    const [rawUseCases, rawSupporting] = await Promise.all([
+        callPlatformAI(useCasesPrompt, { temperature: 0.2, maxTokens: 16000, zohoToken, req }),
+        callPlatformAI(supportingPrompt, { temperature: 0.2, zohoToken, req }),
+    ]);
+    console.log(`✅ [PRD Generator] Calls done. Lengths: ${rawUseCases.length} / ${rawSupporting.length}`);
+
+    function parseJSON(raw: string, label: string): any {
+        const match = raw.match(/\{[\s\S]*\}/);
+        if (!match) { console.warn(`⚠️  [PRD] No JSON found in ${label}`); return {}; }
+        try { return JSON.parse(match[0]); }
+        catch {
+            try {
+                const r = JSON.parse(jsonrepair(match[0]));
+                console.log(`⚠️  [PRD] Used jsonrepair for ${label}`);
+                return r;
+            } catch (e) { console.error(`❌ [PRD] Parse failed for ${label}:`, (e as Error).message); return {}; }
+        }
     }
 
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('AI did not return valid JSON');
+    const part1 = parseJSON(rawUseCases, 'useCases');
+    const part2 = parseJSON(rawSupporting, 'supporting');
 
-    const parsed: PRDSheetData = JSON.parse(jsonMatch[0]);
-
-    // Ensure required fields exist
-    parsed.useCases = parsed.useCases || [];
-    parsed.errorHandling = parsed.errorHandling || [];
-    parsed.affectedAreas = parsed.affectedAreas || [];
-    parsed.limitations = parsed.limitations || [];
+    const parsed: PRDSheetData = {
+        featureName: part1.featureName || fileName,
+        module: part1.module || '',
+        subModule: part1.subModule || '',
+        overview: part1.overview || { pmOwner: '', developers: '', uiOwner: '', qaMembers: '', documentationOwner: '' },
+        useCases: part1.useCases || [],
+        errorHandling: part2.errorHandling || [],
+        affectedAreas: part2.affectedAreas || [],
+        limitations: part2.limitations || [],
+    };
 
     console.log(`✅ [PRD Generator] Parsed PRD: ${parsed.featureName}, ${parsed.useCases.length} use cases, ${parsed.errorHandling.length} errors`);
     return parsed;

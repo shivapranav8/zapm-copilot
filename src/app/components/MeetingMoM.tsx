@@ -1,6 +1,6 @@
 import { apiFetch } from '../../utils/apiFetch';
 import React, { useState } from 'react';
-import { Download, Share2, CheckCircle2, Clock, Users, Edit2, Save, X, RefreshCw } from 'lucide-react';
+import { Download, Copy, CheckCircle2, Clock, Users, Edit2, Save, X, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 export interface ActionItem {
@@ -28,16 +28,16 @@ export interface MeetingMoMData {
 interface MeetingMoMProps {
   data: MeetingMoMData & { id?: string };
   onUpdate: (data: MeetingMoMData) => void;
-  onShare: () => void;
+  onCopy: () => void;
   onDownload: () => void;
 }
 
 type Verbosity = 'brief' | 'standard' | 'detailed';
 
-export function MeetingMoM({ data, onUpdate, onShare, onDownload }: MeetingMoMProps) {
+export function MeetingMoM({ data, onUpdate, onCopy, onDownload }: MeetingMoMProps) {
   const [editingField, setEditingField] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
-  const [verbosity, setVerbosity] = useState<Verbosity>('standard');
+  const [verbosity, setVerbosity] = useState<Verbosity>('brief');
   const [isRegenerating, setIsRegenerating] = useState<string | null>(null);
 
   const startEdit = (field: string, value: string) => {
@@ -110,6 +110,42 @@ export function MeetingMoM({ data, onUpdate, onShare, onDownload }: MeetingMoMPr
     }
   };
 
+  const regenerateFullMoM = async (newVerbosity: Verbosity) => {
+    setIsRegenerating('full');
+    toast.info(`Regenerating entire MoM in ${newVerbosity} style...`);
+    try {
+      if (!data.transcript) {
+        toast.error('Transcript not available — cannot regenerate.');
+        setIsRegenerating(null);
+        return;
+      }
+      const res = await apiFetch('/api/meeting-mom/regenerate-full', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ verbosity: newVerbosity, transcript: data.transcript, meetingTitle: data.meetingTitle }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.details || err.error || `Server error ${res.status}`);
+      }
+      const newMoM = await res.json();
+      onUpdate(newMoM);
+      toast.success('Meeting MoM successfully regenerated!');
+    } catch (err: any) {
+      toast.error(`Full regeneration failed: ${err.message}`);
+    } finally {
+      setIsRegenerating(null);
+    }
+  };
+
+  const handleVerbosityChange = (level: Verbosity) => {
+    if (level === verbosity) return;
+    if (isRegenerating === 'full') return;
+    setVerbosity(level);
+    regenerateFullMoM(level);
+  };
+
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
       {/* Header */}
@@ -146,12 +182,16 @@ export function MeetingMoM({ data, onUpdate, onShare, onDownload }: MeetingMoMPr
               {(['brief', 'standard', 'detailed'] as Verbosity[]).map((level) => (
                 <button
                   key={level}
-                  onClick={() => setVerbosity(level)}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${verbosity === level
+                  onClick={() => handleVerbosityChange(level)}
+                  disabled={isRegenerating === 'full'}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 ${verbosity === level
                       ? 'bg-white text-gray-900 shadow-sm'
                       : 'text-gray-500 hover:text-gray-700'
-                    }`}
+                    } ${isRegenerating === 'full' ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
+                  {isRegenerating === 'full' && verbosity === level && (
+                    <RefreshCw className="w-3 h-3 animate-spin text-blue-500" />
+                  )}
                   {level.charAt(0).toUpperCase() + level.slice(1)}
                 </button>
               ))}
@@ -164,11 +204,11 @@ export function MeetingMoM({ data, onUpdate, onShare, onDownload }: MeetingMoMPr
               Download
             </button>
             <button
-              onClick={onShare}
-              className="px-3 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors flex items-center gap-1.5 text-sm"
+              onClick={onCopy}
+              className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-1.5 text-sm"
             >
-              <Share2 className="w-4 h-4" />
-              Share via Cliq
+              <Copy className="w-4 h-4" />
+              Copy
             </button>
           </div>
         </div>

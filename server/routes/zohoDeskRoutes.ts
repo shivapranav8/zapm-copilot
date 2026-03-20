@@ -177,6 +177,7 @@ zohoDeskRouter.post('/bulk-generate', async (req, res) => {
                 includeDelayApology,
                 userName: ticket.customerName || 'there',
                 responderName,
+                zohoToken: token,
             });
 
             return {

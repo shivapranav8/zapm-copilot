@@ -1,29 +1,10 @@
-import Anthropic from '@anthropic-ai/sdk';
-import { ChatOpenAI } from '@langchain/openai';
 import { TavilySearchAPIRetriever } from '@langchain/community/retrievers/tavily_search_api';
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const openai = new ChatOpenAI({ modelName: 'gpt-4o', temperature: 0.3 });
+import { callPlatformAI } from '../utils/platformAI';
 
 // ── Shared helper ─────────────────────────────────────────────────────────────
 
-async function askClaude(system: string, user: string): Promise<string> {
-    try {
-        const message = await anthropic.messages.create({
-            model: 'claude-sonnet-4-6',
-            max_tokens: 8000,
-            system,
-            messages: [{ role: 'user', content: user }],
-        });
-        return (message.content[0] as any).text as string;
-    } catch (claudeErr: any) {
-        console.warn(`⚠️  [PM Buddy] Claude failed (${claudeErr?.message?.slice(0, 80)}), falling back to GPT-4o...`);
-        const response = await openai.invoke([
-            { role: 'system', content: system },
-            { role: 'user', content: user },
-        ]);
-        return response.content as string;
-    }
+async function askAI(system: string, user: string, zohoToken?: string): Promise<string> {
+    return callPlatformAI(`${system}\n\n---\n\n${user}`, { temperature: 0.3, zohoToken });
 }
 
 function extractJSON(raw: string): any {
@@ -104,6 +85,7 @@ export async function runCompetitorAnalysis(
     domain: string,
     problemStatement: string,
     targetUsers: string,
+    zohoToken?: string,
 ): Promise<CompetitorAnalysisData> {
     console.log(`🔍 [PM Buddy] Feature-level competitor analysis: "${featureName}"`);
 
@@ -153,7 +135,7 @@ ${searchContext}
 For each competitor where documentation was found, analyse ONLY their implementation of "${featureName}" — not their product overall.
 Return structured JSON.`;
 
-    const raw = await askClaude(COMPETITOR_SYSTEM, userMessage);
+    const raw = await askAI(COMPETITOR_SYSTEM, userMessage, zohoToken);
     const parsed = extractJSON(raw);
 
     return {
@@ -251,6 +233,7 @@ Rules:
 export async function generateMRD(
     featureData: { featureName: string; domain: string; problemStatement: string; targetUsers: string },
     competitorData: CompetitorAnalysisData | null,
+    zohoToken?: string,
 ): Promise<MRDData> {
     console.log(`📄 [PM Buddy] Generating MRD for: ${featureData.featureName}`);
 
@@ -273,7 +256,7 @@ ${competitorSection}
 
 Write a specific, detailed MRD for THIS feature — base everything on the actual feature and problem, not generic analytics product content.`;
 
-    const raw = await askClaude(MRD_SYSTEM, userMessage);
+    const raw = await askAI(MRD_SYSTEM, userMessage, zohoToken);
     const parsed = extractJSON(raw);
 
     return {
@@ -374,6 +357,7 @@ Rules:
 export async function generateFRD(
     featureData: { featureName: string; domain: string; problemStatement: string; targetUsers: string },
     mrdData: MRDData,
+    zohoToken?: string,
 ): Promise<FRDData> {
     console.log(`📋 [PM Buddy] Generating FRD for: ${featureData.featureName}`);
 
@@ -395,7 +379,7 @@ ${mrdSummary}
 
 Write specific, implementable functional requirements, user flows, API specs, and NFRs for THIS feature.`;
 
-    const raw = await askClaude(FRD_SYSTEM, userMessage);
+    const raw = await askAI(FRD_SYSTEM, userMessage, zohoToken);
     const parsed = extractJSON(raw);
 
     return {
@@ -436,7 +420,7 @@ Keep responses concise (2–4 sentences) and actionable.
 If the user asks to change something, acknowledge and explain what they should do next.
 Do not generate full documents in chat — just guide, answer questions, and give advice.`;
 
-export async function handleChat(message: string, context: ChatContext): Promise<string> {
+export async function handleChat(message: string, context: ChatContext, zohoToken?: string): Promise<string> {
     const contextSummary = [
         `Current stage: ${context.stage}`,
         context.featureData ? `Feature: ${context.featureData.featureName} (${context.featureData.domain})` : '',
@@ -447,7 +431,7 @@ export async function handleChat(message: string, context: ChatContext): Promise
     const userMessage = `Context:\n${contextSummary}\n\nUser message: ${message}`;
 
     try {
-        return await askClaude(CHAT_SYSTEM, userMessage);
+        return await askAI(CHAT_SYSTEM, userMessage, zohoToken);
     } catch {
         return "I'm processing your request. How else can I assist you with the product workflow?";
     }

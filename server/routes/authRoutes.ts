@@ -30,6 +30,9 @@ const ZOHO_SCOPE = [
     'ZohoFiles.files.READ',
     'ZohoMeeting.meeting.READ',
     'ZohoMeeting.recording.READ',
+    'ZohoMeeting.meeting.ALL',
+    'ZohoMeeting.recording.ALL',
+    'PlatformAI.organizations.all',
 ].join(',');
 
 function getRedirectUri(req: Request): string {
@@ -63,9 +66,9 @@ function getFrontendUrl(req: Request): string {
     const host = req.get('host') || 'localhost:5001';
     const protocol = req.get('x-forwarded-proto') || req.protocol || 'http';
 
-    // Local dev: backend is on :5001, frontend is on :5174 (Vite)
-    if (host.includes('localhost:') && protocol === 'http') {
-        return 'http://localhost:5174';
+    // Local dev: backend is on :5001, frontend is on :5173 (Vite)
+    if ((host.includes('localhost:') || host.includes('127.0.0.1:')) && protocol === 'http') {
+        return 'http://localhost:5173';
     }
     // Production: frontend is served at the root of the same domain.
     return `${protocol}://${host}`;
@@ -235,35 +238,41 @@ authRouter.post('/logout', (req: Request, res: Response) => {
     res.json({ loggedOut: true });
 });
 
-// ─── GET /api/auth/refresh ───────────────────────────────────────────────────
-// Silently refresh the access token using the session refresh token.
-authRouter.get('/refresh', async (req: Request, res: Response) => {
+// ─── Shared token refresh helper (used by route handlers for auto-retry) ─────
+export async function refreshSessionToken(req: Request): Promise<string> {
     const refreshToken = req.session.zoho?.refreshToken;
     const clientId = getClientId();
     const clientSecret = getClientSecret();
 
     if (!refreshToken || !clientId || !clientSecret) {
-        return res.status(401).json({ error: 'No refresh token or client credentials' });
+        throw new Error('No refresh token available — user must log in again');
     }
 
+    const tokenRes = await fetch(`${ACCOUNTS_BASE}/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+            grant_type: 'refresh_token',
+            refresh_token: refreshToken,
+            client_id: clientId,
+            client_secret: clientSecret,
+        }),
+    });
+
+    const data = await tokenRes.json() as any;
+    if (!data.access_token) {
+        throw new Error(`Token refresh failed: ${JSON.stringify(data)}`);
+    }
+
+    req.session.zoho!.accessToken = data.access_token;
+    console.log('🔄 [Auth] Token auto-refreshed successfully');
+    return data.access_token;
+}
+
+// ─── GET /api/auth/refresh ───────────────────────────────────────────────────
+authRouter.get('/refresh', async (req: Request, res: Response) => {
     try {
-        const tokenRes = await fetch(`${ACCOUNTS_BASE}/token`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-                grant_type: 'refresh_token',
-                refresh_token: refreshToken,
-                client_id: clientId,
-                client_secret: clientSecret,
-            }),
-        });
-
-        const data = await tokenRes.json() as any;
-        if (!data.access_token) {
-            throw new Error(`Refresh failed: ${JSON.stringify(data)}`);
-        }
-
-        req.session.zoho!.accessToken = data.access_token;
+        await refreshSessionToken(req);
         res.json({ ok: true });
     } catch (err) {
         res.status(500).json({ error: 'Token refresh failed', details: String(err) });

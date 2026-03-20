@@ -1,50 +1,49 @@
-import { ChatOpenAI } from "@langchain/openai";
 import { z } from "zod";
-import { PromptTemplate } from "@langchain/core/prompts";
+import { callPlatformAI } from '../utils/platformAI';
 import dotenv from 'dotenv';
-import { competitorAgent } from "./competitor";
-import { discoveryAgent } from "./discovery";
 
 dotenv.config();
 
 // Define Schema
 const designSchema = z.object({
-    goal: z.string().describe("High level design goal"),
-    persona: z.string().describe("Target persona for the UI (e.g., 'Busy Exec')"),
-    tone: z.string().describe("Visual tone (e.g., 'Clean, Enterprise, Friendly')"),
-    constraints: z.array(z.string()).describe("Technical or brand constraints"),
+    goal: z.string(),
+    persona: z.string(),
+    tone: z.string(),
+    constraints: z.array(z.string()),
     screens: z.array(z.object({
         name: z.string(),
         description: z.string(),
-        states: z.array(z.string()).describe("List of states like Empty, Loading, Error, etc.")
+        states: z.array(z.string())
     })),
-    accessibility: z.array(z.string()).describe("WCAG compliance notes"),
+    accessibility: z.array(z.string()),
 });
 
-export const designAgent = async (topic: string, mrdData?: any) => {
-    const model = new ChatOpenAI({
-        modelName: "gpt-4o",
-        temperature: 0.7,
-    });
+export const designAgent = async (topic: string, mrdData?: any, zohoToken?: string) => {
+    const prompt = `You are a Senior Product Designer.
+Create a 'Design Prompt' for an AI UI generator (like Figma AI) based on this feature: "${topic}".
 
-    const structuredModel = model.withStructuredOutput(designSchema);
+Context from Discovery (MRD):
+${JSON.stringify(mrdData || {})}
 
-    const prompt = PromptTemplate.fromTemplate(`
-    You are a Senior Product Designer. 
-    Create a 'Design Prompt' for an AI UI generator (like Figma AI) based on this feature: "{topic}".
-    
-    Context from Discovery (MRD):
-    {mrd_context}
-    
-    Output strictly in the requested JSON format.
-  `);
+Output strictly in JSON format with this exact structure:
+{
+  "goal": "string — high level design goal",
+  "persona": "string — target persona (e.g. 'Busy Exec')",
+  "tone": "string — visual tone (e.g. 'Clean, Enterprise, Friendly')",
+  "constraints": ["string — technical or brand constraint"],
+  "screens": [
+    {
+      "name": "string",
+      "description": "string",
+      "states": ["string — state name like Empty, Loading, Error, etc."]
+    }
+  ],
+  "accessibility": ["string — WCAG compliance note"]
+}`;
 
-    const chain = prompt.pipe(structuredModel);
+    const raw = await callPlatformAI(prompt, { temperature: 0.7, zohoToken });
 
-    const result = await chain.invoke({
-        topic,
-        mrd_context: JSON.stringify(mrdData || {})
-    });
-
-    return result;
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('Design agent did not return valid JSON');
+    return JSON.parse(jsonMatch[0]);
 };

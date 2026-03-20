@@ -74,9 +74,9 @@ export function MeetingMoMPage({ onBack, onSubmit, meetingMoMData, isLoading, pr
       .catch(() => { });
   };
 
-  const handleDownload = () => {
-    if (!localMoMData) return;
-    const content = [
+  const generateMarkdown = () => {
+    if (!localMoMData) return '';
+    return [
       `# ${localMoMData.meetingTitle}`,
       `Date: ${localMoMData.date} | Duration: ${localMoMData.duration}`,
       `Attendees: ${localMoMData.attendees.join(', ')}`,
@@ -94,6 +94,11 @@ export function MeetingMoMPage({ onBack, onSubmit, meetingMoMData, isLoading, pr
       ...localMoMData.actionItems.map(a => `- [${a.priority}] ${a.task} — ${a.assignee} (Due: ${a.dueDate})`),
       ...(localMoMData.nextMeeting ? ['', '## Next Meeting', localMoMData.nextMeeting] : []),
     ].join('\n');
+  };
+
+  const handleDownload = () => {
+    const content = generateMarkdown();
+    if (!content || !localMoMData) return;
     const blob = new Blob([content], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -101,6 +106,17 @@ export function MeetingMoMPage({ onBack, onSubmit, meetingMoMData, isLoading, pr
     a.download = `${localMoMData.meetingTitle.replace(/\s+/g, '_')}_MoM.md`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleCopy = async () => {
+    const content = generateMarkdown();
+    if (!content) return;
+    try {
+      await navigator.clipboard.writeText(content);
+      toast.success('MoM copied to clipboard!');
+    } catch (err) {
+      toast.error('Failed to copy to clipboard');
+    }
   };
 
   return (
@@ -220,7 +236,7 @@ export function MeetingMoMPage({ onBack, onSubmit, meetingMoMData, isLoading, pr
             <MeetingMoM
               data={localMoMData}
               onUpdate={(updated) => setLocalMoMData(updated)}
-              onShare={() => toast.info('Sharing via Zoho Cliq...')}
+              onCopy={handleCopy}
               onDownload={handleDownload}
             />
           </div>

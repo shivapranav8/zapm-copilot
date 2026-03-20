@@ -26,11 +26,13 @@ pmBuddyRouter.post('/competitor-analysis', async (req, res) => {
     console.log(`🔍 [PM Buddy Route] /competitor-analysis — "${featureName}" in "${domain}"`);
 
     try {
+        const zohoToken = (req as any).session?.zoho?.accessToken;
         const data: CompetitorAnalysisData = await runCompetitorAnalysis(
             featureName,
             domain,
             problemStatement || '',
             targetUsers || '',
+            zohoToken,
         );
         res.json(data);
     } catch (error) {
@@ -55,7 +57,8 @@ pmBuddyRouter.post('/generate-mrd', async (req, res) => {
     console.log(`📄 [PM Buddy Route] /generate-mrd — "${featureData.featureName}"`);
 
     try {
-        const data: MRDData = await generateMRD(featureData, competitorData);
+        const zohoToken = (req as any).session?.zoho?.accessToken;
+        const data: MRDData = await generateMRD(featureData, competitorData, zohoToken);
         res.json(data);
     } catch (error) {
         console.error('❌ [PM Buddy] MRD generation failed:', error);
@@ -82,7 +85,8 @@ pmBuddyRouter.post('/generate-frd', async (req, res) => {
     console.log(`📋 [PM Buddy Route] /generate-frd — "${featureData.featureName}"`);
 
     try {
-        const data: FRDData = await generateFRD(featureData, mrdData);
+        const zohoToken = (req as any).session?.zoho?.accessToken;
+        const data: FRDData = await generateFRD(featureData, mrdData, zohoToken);
         res.json(data);
     } catch (error) {
         console.error('❌ [PM Buddy] FRD generation failed:', error);
@@ -160,7 +164,8 @@ ${mrdData.zohoImplementation?.architecture}
 ${competitorSection}`;
 
         // Run through the PRD Generator agent (same agent used by the PRD Generator tool)
-        const prdData = await runPRDGenerator(mrdText, `${featureData.featureName}_MRD.md`, 'docx');
+        const zohoToken = (req as any).session?.zoho?.accessToken;
+        const prdData = await runPRDGenerator(mrdText, `${featureData.featureName}_MRD.md`, 'docx', zohoToken);
 
         // Write Excel
         const excelBuffer = await writePRDExcel(prdData);
@@ -201,7 +206,8 @@ pmBuddyRouter.post('/chat', async (req, res) => {
     console.log(`💬 [PM Buddy Route] /chat — stage="${stage}" message="${message.slice(0, 60)}"`);
 
     try {
-        const reply = await handleChat(message, { stage: stage || 'input', featureData, mrdData, frdData });
+        const zohoToken = (req as any).session?.zoho?.accessToken;
+        const reply = await handleChat(message, { stage: stage || 'input', featureData, mrdData, frdData }, zohoToken);
         res.json({ reply });
     } catch (error) {
         console.error('❌ [PM Buddy] Chat failed:', error);

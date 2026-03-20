@@ -1,5 +1,5 @@
-import { ChatOpenAI } from '@langchain/openai';
 import { z } from 'zod';
+import { callPlatformAI } from '../utils/platformAI';
 
 // Input schema for meeting MoM generator
 const MeetingMoMInputSchema = z.object({
@@ -7,7 +7,8 @@ const MeetingMoMInputSchema = z.object({
     transcript: z.string().optional().describe('Meeting transcript or notes'),
     meetingTitle: z.string().optional().describe('Title of the meeting'),
     visualContext: z.string().optional().describe('Visual context from screen sharing/slides analysis'),
-    detailed: z.boolean().optional().describe('Generate detailed report with term validation'),
+    verbosity: z.enum(['brief', 'standard', 'detailed']).optional().describe('Generate detailed report with term validation'),
+    zohoToken: z.string().optional().describe('Zoho OAuth token for PlatformAI auth'),
 });
 
 // Output schema matching frontend MeetingMoMData interface
@@ -38,11 +39,6 @@ const MeetingMoMOutputSchema = z.object({
 export type MeetingMoMInput = z.infer<typeof MeetingMoMInputSchema>;
 export type MeetingMoMOutput = z.infer<typeof MeetingMoMOutputSchema>;
 
-// Initialize the model
-const model = new ChatOpenAI({
-    modelName: 'gpt-4o',
-    temperature: 0.3,
-});
 
 export async function generateMeetingMoM(
     input: MeetingMoMInput
@@ -98,20 +94,31 @@ If an acronym appears that is NOT in this list, mark it as "Needs Review".
 The transcript may be in Tanglish (Tamil + English code-switching). Tamil words or phrases may appear transliterated in English (e.g., "seri", "enna", "panrom", "pakkalaam"). Treat them as conversational filler and focus on the English technical content. Do not translate Tamil words — just skip them when extracting facts.
 `;
 
-    const systemPrompt = input.detailed ?
-        `You are an expert BI (Business Intelligence) Technical Writer and Meeting Analyst. Analyze the meeting transcript${input.visualContext ? ' and visual context' : ''} to generate a DEEP DIVE, HIGH-FIDELITY meeting record.
+    const verbosity = input.verbosity || 'brief'; // Default to brief
+
+    const verbosityGuide = verbosity === 'brief'
+        ? 'EXTREMELY CONCISE (Action-Oriented Pointers): Provide only sharp, single-line bullet points. Do NOT write paragraphs or descriptive fluff. For Discussions (Key Points) and Decisions, write raw, direct facts (e.g., "Include & Exclude filters -> separate tabs"). **CRITICAL LIMIT: You MUST aggressively merge related points to output exactly 6 to 10 bullet points MAXIMUM per section (Discussions, Decisions).** Keep the summary to a single simple sentence.'
+        : verbosity === 'detailed'
+        ? 'Be thorough — 4-6 sentences per discussion point, capture nuances, quotes, and specifics. Generate a DEEP DIVE, HIGH-FIDELITY meeting record.'
+        : 'Be descriptive — 3-4 paragraphs per discussion point, NEVER write one-liners or short labels.';
+
+    const systemPrompt = `You are an expert BI (Business Intelligence) Technical Writer and Meeting Analyst. Analyze the meeting transcript${input.visualContext ? ' and visual context' : ''} to generate a structured meeting record.
 ${biContext}
+
 **Meeting Transcript**:
 ${transcript}
 ${input.visualContext ? `\n**Visual Context**:\n${input.visualContext}\n` : ''}
 
+**Verbosity Instruction**:
+${verbosityGuide}
+
 **Your Task**:
 Generate an extensive JSON report. Focus on capturing technical nuances, specific data points, and verifying BI terminology (e.g., PII, ETL, KPI, etc.).
 
-1. **Meeting Title**: Specific and descriptive.
+1. **Meeting Title**: Specific and descriptive. Infer from the transcript or use "${input.meetingTitle || 'Team Meeting'}"
 2. **Attendees**: List names clearly heard or mentioned. Only add a role if explicitly stated. Otherwise just the name.
-3. **Summary**: Comprehensive 5-8 sentence paragraph capturing the core narrative and business value.
-4. **Key Discussions**: DETAILED list. For each point write 3-5 sentences. NEVER write a one-liner. Cover what was discussed, why it matters, concerns raised, quotes from participants, and any direction agreed. If a topic has insufficient transcript content, combine it with a related point rather than writing a shallow entry.
+3. **Summary**: A paragraph capturing the core narrative and business value. Follow the verbosity instruction.
+4. **Key Discussions**: List of main points. Follow the verbosity instruction for length and detail. Never write a single phrase. 
 5. **Decisions Made**: Precise decisions explicitly agreed upon.
 6. **Action Items**: Detailed tasks explicitly assigned.
    - Assignee: only if explicitly named. Use "Unassigned" otherwise.
@@ -139,51 +146,6 @@ Return ONLY valid JSON:
     { "term": "PAU", "definition": "Unknown acronym used in context of user stats", "status": "Needs Review" }
   ]
 }
-`
-        :
-        `You are an expert meeting minutes assistant. Analyze the meeting transcript${input.visualContext ? ' and visual context from screen sharing' : ''} and generate comprehensive, structured meeting minutes.
-${biContext}
-**Meeting Transcript**:
-${transcript}
-${input.visualContext ? `\n**Visual Context from Screen Sharing/Slides**:\n${input.visualContext}\n` : ''}
-
-**Your Task**:
-Generate structured meeting minutes with the following information:
-
-1. **Meeting Title**: Infer from the transcript or use "${input.meetingTitle || 'Team Meeting'}"
-2. **Attendees**: List all participants mentioned in the transcript. Only add a role if explicitly stated (e.g., "I'm the PM"). Otherwise just the name. If no names audible, return empty array.
-3. **Summary**: 3-5 sentence overview of what was discussed, decided, and what happens next.${input.visualContext ? ' Incorporate visual information if relevant.' : ''}
-4. **Key Discussions**: For each topic discussed, write 3-4 full descriptive sentences. NEVER write a one-liner or a short label. Each entry must cover: (a) what specifically was discussed, (b) why it matters or what problem it addresses, (c) any concerns, constraints, or context raised, (d) any next steps or direction agreed on for that topic. BAD example: "Live connect feature discussed." GOOD example: "The team reviewed the live connect feature configuration and noted that the current setup requires several manual steps from the customer side that could realistically be automated. There were concerns raised about latency during data sync, particularly for workspaces with large datasets. It was suggested to add a retry logic layer before the next release to handle intermittent failures gracefully. The team agreed this would be a high priority item for the upcoming sprint." Write like this for EVERY discussion point. If you cannot find enough content in the transcript to write 3 sentences, combine it with a related topic instead of writing a shallow entry.${input.visualContext ? ' Include information from slides/diagrams if shown.' : ''}
-5. **Decisions Made**: Clear decisions that were agreed upon. If none, return empty array.
-6. **Action Items**: All tasks assigned or agreed upon.
-   - Assignee: use the name if mentioned, otherwise "Unassigned".
-   - Due date: only if a date was explicitly mentioned in the meeting. Otherwise use "TBD". Do NOT invent dates.
-   - Priority: infer from urgency words ("urgent", "ASAP", "by EOD", "blocker") only. Otherwise "Medium".
-   - Default status to "Pending" unless mentioned as in-progress.
-7. **Next Meeting**: If mentioned, include date/time. Otherwise omit entirely.
-
-**Output Format**:
-Return ONLY a valid JSON object (no markdown, no code blocks) with this exact structure:
-{
-  "meetingTitle": "string",
-  "date": "Month DD, YYYY",
-  "duration": "Xh XXmin or 'Not mentioned'",
-  "attendees": ["Name (Role if explicitly stated)", ...],
-  "summary": "string",
-  "keyDiscussions": ["string", ...],
-  "decisions": ["string", ...],
-  "actionItems": [
-    {
-      "id": "1",
-      "task": "string",
-      "assignee": "Name or Unassigned",
-      "dueDate": "Mon DD, YYYY or TBD",
-      "priority": "High|Medium|Low",
-      "status": "Pending|In Progress|Completed"
-    }
-  ],
-  "nextMeeting": "Day, Month DD, YYYY at HH:MM AM/PM - Topic (omit field if not mentioned)"
-}
 `;
 
     const prompt = `${systemPrompt}
@@ -198,10 +160,10 @@ ${input.visualContext ? '- Incorporate information from slides, diagrams, or scr
 - Return ONLY the JSON object, no other text
 `;
 
-    const response = await model.invoke(prompt);
+    const rawResponse = await callPlatformAI(prompt, { temperature: 0.3, zohoToken: input.zohoToken });
 
     try {
-        const content = response.content.toString();
+        const content = rawResponse;
 
         // Remove markdown code blocks if present
         const cleanContent = content
@@ -224,7 +186,7 @@ ${input.visualContext ? '- Incorporate information from slides, diagrams, or scr
         return parsed;
     } catch (e) {
         console.error('Error parsing MoM response:', e);
-        console.error('Raw response:', response.content.toString().substring(0, 500));
+        console.error('Raw response:', rawResponse.substring(0, 500));
 
         // Return fallback structure
         return {

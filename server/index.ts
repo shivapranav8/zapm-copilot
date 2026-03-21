@@ -8,6 +8,7 @@ import { frdRouter } from './routes/frdRoutes';
 import { cliqRouter } from './routes/cliqRoutes';
 import { prdGeneratorRouter } from './routes/prdGeneratorRoutes';
 import { pmBuddyRouter } from './routes/pmBuddyRoutes';
+import { genqaRouter } from './routes/genqaRoutes';
 
 dotenv.config();
 
@@ -79,6 +80,7 @@ app.use(['/api/frd', '/server/node-server/api/frd'], frdRouter);
 app.use(['/api/cliq', '/server/node-server/api/cliq'], cliqRouter);
 app.use(['/api/prd-generator', '/server/node-server/api/prd-generator'], prdGeneratorRouter);
 app.use(['/api/pm-buddy', '/server/node-server/api/pm-buddy'], pmBuddyRouter);
+app.use(['/api/genqa', '/server/node-server/api/genqa'], genqaRouter);
 
 // Global error handler — must be AFTER all routes.
 // Catches any error that escapes a route's try/catch (e.g. Express 5 async propagation).

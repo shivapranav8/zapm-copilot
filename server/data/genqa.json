@@ -1,0 +1,50 @@
+{
+  "prompts": [],
+  "promptVersions": [],
+  "testsets": [
+    {
+      "serial_no": 1,
+      "teamname": "Analytics",
+      "task": "SQL Agent",
+      "prompt_version": 1,
+      "testset": [
+        "SELECT     c.customer_id,     c.customer_name,     o.region,     COUNT(DISTINCT o.order_id) AS total_orders,     SUM(oi.quantity * oi.unit_price) AS gross_revenue,     SUM((oi.quantity * oi.unit_price) - oi.discount_amount) AS net_revenue,     AVG(oi.unit_price) AS avg_unit_price,     MAX(o.order_date) AS last_order_date,     RANK() OVER (         PARTITION BY o.region         ORDER BY SUM((oi.quantity * oi.unit_price) - oi.discount_amount) DESC     ) AS revenue_rank_in_region FROM customers c JOIN orders o     ON c.customer_id = o.customer_id JOIN order_items oi     ON o.order_id = oi.order_id LEFT JOIN products p     ON oi.product_id = p.product_id WHERE     o.order_date BETWEEN DATE '2025-01-01' AND DATE '2025-12-31'     AND o.status = 'Completed'     AND p.category IN ('Electronics', 'Software', 'Accessories') GROUP BY     c.customer_id,     c.customer_name,     o.region HAVING     SUM((oi.quantity * oi.unit_price) - oi.discount_amount) > 5000 ORDER BY     o.region,     net_revenue DESC;"
+      ],
+      "created_at": "2026-03-19T05:03:51.665Z",
+      "updated_at": "2026-03-19T05:03:51.665Z"
+    },
+    {
+      "serial_no": 2,
+      "teamname": "SQL Agent",
+      "task": "Ask Zia",
+      "prompt_version": 1,
+      "testset": [
+        "You are a support agent for Zoho. A customer says: \"My invoice is wrong, I was charged twice.\" Reply in a professional tone and keep it under 50 words."
+      ],
+      "created_at": "2026-03-19T06:11:35.948Z",
+      "updated_at": "2026-03-19T06:11:35.948Z"
+    },
+    {
+      "serial_no": 3,
+      "teamname": "SQL Agent",
+      "task": "Ask Zia",
+      "prompt_version": 1,
+      "testset": [
+        "You are a support agent for Zoho. A customer says: \"My invoice is wrong, I was charged thrice.\" Reply in a professional tone and keep it under 50 words."
+      ],
+      "created_at": "2026-03-19T06:11:51.074Z",
+      "updated_at": "2026-03-19T06:11:51.074Z"
+    },
+    {
+      "serial_no": 4,
+      "teamname": "SQL Agent",
+      "task": "Ask Zia",
+      "prompt_version": 1,
+      "testset": [
+        "You are a support agent for Zoho. A customer says: \"My invoice is correct, thank you so much.\" Reply in a professional tone and keep it under 50 words."
+      ],
+      "created_at": "2026-03-19T06:12:07.187Z",
+      "updated_at": "2026-03-19T06:12:07.188Z"
+    }
+  ]
+}

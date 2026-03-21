@@ -24,6 +24,7 @@ import { ZipUpload } from './components/ZipUpload';
 import { PRDExcel, PRDExcelData } from './components/PRDExcel';
 import { FRDAuditPage } from './components/FRDAuditPage';
 import { FRDAudit, AuditData } from './components/FRDAudit';
+import { GenQAPage } from './components/GenQAPage';
 import { LoginPage } from './components/LoginPage';
 import { AppHeader } from './components/AppHeader';
 import { toast } from 'sonner';
@@ -38,7 +39,7 @@ type WorkflowStage =
   | 'frd-approved'
   | 'design';
 
-type View = 'home' | 'pm-buddy' | 'community-ticket' | 'prd-generator' | 'meeting-mom' | 'frd-audit';
+type View = 'home' | 'pm-buddy' | 'community-ticket' | 'prd-generator' | 'meeting-mom' | 'frd-audit' | 'genqa';
 
 interface FeatureData {
   featureName: string;
@@ -1165,6 +1166,12 @@ Generated on: ${new Date().toLocaleString()}
           progress={frdAuditProgress}
           progressMessage={frdAuditMessage}
         />
+      );
+    }
+
+    if (currentView === 'genqa') {
+      return (
+        <GenQAPage onBack={handleBackToHome} />
       );
     }
 

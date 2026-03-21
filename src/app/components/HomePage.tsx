@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sparkles, MessageSquare, PenLine, Users, Code, TicketCheck, FileSpreadsheet, FileCheck } from 'lucide-react';
+import { Sparkles, MessageSquare, PenLine, Users, Code, TicketCheck, FileSpreadsheet, FileCheck, FlaskRound } from 'lucide-react';
 
 interface Tool {
   id: string;
@@ -11,7 +11,7 @@ interface Tool {
 }
 
 interface HomePageProps {
-  onToolSelect: (toolId: 'pm-buddy' | 'community-ticket' | 'prd-generator' | 'meeting-mom' | 'frd-audit') => void;
+  onToolSelect: (toolId: 'pm-buddy' | 'community-ticket' | 'prd-generator' | 'meeting-mom' | 'frd-audit' | 'genqa') => void;
 }
 
 export function HomePage({ onToolSelect }: HomePageProps) {
@@ -55,6 +55,14 @@ export function HomePage({ onToolSelect }: HomePageProps) {
       icon: <FileCheck className="w-8 h-8" />,
       color: 'text-green-600',
       gradient: 'from-green-600 to-lime-600',
+    },
+    {
+      id: 'genqa',
+      name: 'AI Evals Studio',
+      description: 'Manage, version, test, and refine AI prompts with PlatformAI integration and test case management',
+      icon: <FlaskRound className="w-8 h-8" />,
+      color: 'text-teal-600',
+      gradient: 'from-teal-600 to-emerald-600',
     },
   ];
 

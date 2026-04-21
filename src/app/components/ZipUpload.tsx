@@ -147,7 +147,7 @@ export function ZipUpload({ onUpload, onClose }: ZipUploadProps) {
             <strong>ZIP (React folder):</strong> Upload a zipped React/TypeScript project — the AI reverse-engineers every feature into a full PRD.<br />
             <strong>DOCX (MRD):</strong> Upload a Marketing Requirements Document — the AI expands it into a granular functional PRD.<br />
             <strong>HTML (prototype):</strong> Upload an HTML mockup or prototype page — the AI extracts all UI interactions and flows.<br />
-            <strong>Output:</strong> A <code>.zip</code> file containing both an <strong>Excel (.xlsx)</strong> and an <strong>HTML (.html)</strong> version of the PRD.
+            <strong>Output:</strong> A downloadable <strong>Excel (.xlsx)</strong> PRD.
           </p>
         </div>
       </div>

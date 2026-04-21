@@ -28,10 +28,10 @@ export function ZipUpload({ onUpload, onClose }: ZipUploadProps) {
 
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const file = e.dataTransfer.files[0];
-      if (file.name.endsWith('.zip') || file.name.endsWith('.docx')) {
+      if (file.name.endsWith('.zip') || file.name.endsWith('.docx') || file.name.endsWith('.html')) {
         setSelectedFile(file);
       } else {
-        alert('Please upload a .zip (React folder) or .docx (MRD document)');
+        alert('Please upload a .zip (React folder), .docx (MRD document), or .html (prototype/mockup)');
       }
     }
   };
@@ -40,10 +40,10 @@ export function ZipUpload({ onUpload, onClose }: ZipUploadProps) {
     e.preventDefault();
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      if (file.name.endsWith('.zip') || file.name.endsWith('.docx')) {
+      if (file.name.endsWith('.zip') || file.name.endsWith('.docx') || file.name.endsWith('.html')) {
         setSelectedFile(file);
       } else {
-        alert('Please upload a .zip (React folder) or .docx (MRD document)');
+        alert('Please upload a .zip (React folder), .docx (MRD document), or .html (prototype/mockup)');
       }
     }
   };
@@ -72,7 +72,7 @@ export function ZipUpload({ onUpload, onClose }: ZipUploadProps) {
           </div>
           <div>
             <h2 className="text-xl text-gray-900">Upload File</h2>
-            <p className="text-sm text-gray-500">ZIP (React folder) or DOCX (MRD) to generate PRD</p>
+            <p className="text-sm text-gray-500">ZIP · DOCX · HTML to generate PRD</p>
           </div>
         </div>
         <button
@@ -120,7 +120,7 @@ export function ZipUpload({ onUpload, onClose }: ZipUploadProps) {
               </div>
               <div>
                 <p className="text-gray-900 mb-1">
-                  Drag and drop your ZIP file here, or
+                  Drag and drop your file here, or
                 </p>
                 <button
                   onClick={() => fileInputRef.current?.click()}
@@ -129,13 +129,13 @@ export function ZipUpload({ onUpload, onClose }: ZipUploadProps) {
                   browse to upload
                 </button>
               </div>
-              <p className="text-xs text-gray-500">.zip (React folder) or .docx (MRD document)</p>
+              <p className="text-xs text-gray-500">.zip (React folder) · .docx (MRD) · .html (prototype)</p>
             </div>
           )}
           <input
             ref={fileInputRef}
             type="file"
-            accept=".zip,.docx"
+            accept=".zip,.docx,.html"
             onChange={handleChange}
             className="hidden"
           />
@@ -144,8 +144,9 @@ export function ZipUpload({ onUpload, onClose }: ZipUploadProps) {
         {/* Info */}
         <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-4">
           <p className="text-sm text-blue-900">
-            <strong>ZIP (React folder):</strong> Upload a zipped React/TypeScript project — the AI reverse-engineers every feature, interaction, and edge case into a full PRD.<br />
+            <strong>ZIP (React folder):</strong> Upload a zipped React/TypeScript project — the AI reverse-engineers every feature into a full PRD.<br />
             <strong>DOCX (MRD):</strong> Upload a Marketing Requirements Document — the AI expands it into a granular functional PRD.<br />
+            <strong>HTML (prototype):</strong> Upload an HTML mockup or prototype page — the AI extracts all UI interactions and flows.<br />
             <strong>Output:</strong> A <code>.zip</code> file containing both an <strong>Excel (.xlsx)</strong> and an <strong>HTML (.html)</strong> version of the PRD.
           </p>
         </div>

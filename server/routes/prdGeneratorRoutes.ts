@@ -152,9 +152,14 @@ prdGeneratorRouter.post('/generate', upload.single('file'), async (req, res) => 
         } else if (ext === '.docx') {
             content = await extractDocxContent(filePath);
             sourceType = 'docx';
+        } else if (ext === '.html') {
+            content = fs.readFileSync(filePath, 'utf-8');
+            if (!content.trim()) throw new Error('HTML file appears to be empty.');
+            console.log(`🌐 [PRD Generator] Extracted ${content.length} chars from HTML`);
+            sourceType = 'zip'; // treated as source code input
         } else {
             return res.status(400).json({
-                error: `Unsupported file type: ${ext}. Please upload a .zip (React folder) or .docx (MRD).`,
+                error: `Unsupported file type: ${ext}. Please upload a .zip (React folder), .docx (MRD), or .html (prototype).`,
             });
         }
 

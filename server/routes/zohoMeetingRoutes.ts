@@ -628,8 +628,43 @@ zohoMeetingRouter.post('/process', async (req, res) => {
 
         send({ status: 'processing', progress: 82, message: `Transcript ready (${transcriptLen} chars). Generating MoM...`, transcriptPreview: transcript.trim().slice(0, 300) });
 
+        // End stream here — frontend will call /generate-mom in a fresh 300s window
+        send({ status: 'transcribed', progress: 82, message: `Transcript ready (${transcriptLen} chars). Generating MoM...`, transcript: transcript.trim(), meetingTitle: meetingTitle || 'Zoho Meeting Recording', verbosity: verbosity || 'brief' });
+        console.log(`✅ [${jobId}] Transcription done — handing off to /generate-mom`);
+    } catch (err) {
+        try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        console.error(`❌ [${jobId}] Error:`, msg);
+        send({ status: 'error', message: msg });
+    } finally {
+        res.end();
+    }
+});
+
+// ─── POST /api/zoho-meeting/generate-mom ─────────────────────────────────────
+// Second step: takes transcript, generates MoM. Runs in its own 300s Vercel window.
+zohoMeetingRouter.post('/generate-mom', async (req, res) => {
+    const { transcript, meetingTitle, verbosity } = req.body as {
+        transcript: string;
+        meetingTitle?: string;
+        verbosity?: 'brief' | 'standard' | 'detailed';
+    };
+
+    if (!transcript?.trim()) {
+        return res.status(400).json({ error: 'transcript is required' });
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+    try {
         send({ status: 'processing', progress: 85, message: 'Generating Minutes of Meeting with AI...' });
         console.log('🤖 Generating MoM with PlatformAI...');
+
         const momData = await generateMeetingMoM({
             transcript,
             meetingTitle: meetingTitle || 'Zoho Meeting Recording',
@@ -641,11 +676,10 @@ zohoMeetingRouter.post('/process', async (req, res) => {
         const storedMoM = await saveMoM(momData, transcript);
 
         send({ status: 'done', progress: 100, message: 'Done!', result: storedMoM });
-        console.log(`✅ [${jobId}] MoM generated successfully`);
+        console.log('✅ MoM generated successfully');
     } catch (err) {
-        try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
         const msg = err instanceof Error ? err.message : 'Unknown error';
-        console.error(`❌ [${jobId}] Error:`, msg);
+        console.error('❌ MoM generation error:', msg);
         send({ status: 'error', message: msg });
     } finally {
         res.end();

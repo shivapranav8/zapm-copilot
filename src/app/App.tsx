@@ -724,32 +724,54 @@ They can review and provide feedback directly in Cliq!`,
         }
 
         result = await new Promise<MeetingMoMData>((resolve, reject) => {
-          const reader = streamRes.body!.getReader();
           const decoder = new TextDecoder();
-          let buffer = '';
 
-          const fail = (err: unknown) => { reader.cancel(); reject(err); };
+          const fail = (err: unknown) => reject(err);
 
-          function pump() {
-            reader.read().then(({ done, value }) => {
-              if (done) { fail(new Error('Stream ended unexpectedly')); return; }
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split('\n');
-              buffer = lines.pop() || '';
-              for (const line of lines) {
-                if (!line.startsWith('data: ')) continue;
-                try {
-                  const event = JSON.parse(line.slice(6));
-                  setMeetingMoMProgress(event.progress ?? 0);
-                  setMeetingMoMMessage(event.message ?? '');
-                  if (event.status === 'done') { resolve(event.result); return; }
-                  if (event.status === 'error') { fail(new Error(event.message || 'Processing failed')); return; }
-                } catch { /* ignore malformed line */ }
-              }
-              pump();
-            }).catch(fail);
+          function pumpStream(reader: ReadableStreamDefaultReader<Uint8Array>, onTranscribed?: (transcript: string, meetingTitle: string, verbosity: string) => void) {
+            let buffer = '';
+            function pump() {
+              reader.read().then(({ done, value }) => {
+                if (done) {
+                  // Stream ended cleanly after 'transcribed' — expected, not an error
+                  return;
+                }
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                for (const line of lines) {
+                  if (!line.startsWith('data: ')) continue;
+                  try {
+                    const event = JSON.parse(line.slice(6));
+                    setMeetingMoMProgress(event.progress ?? 0);
+                    setMeetingMoMMessage(event.message ?? '');
+                    if (event.status === 'done') { resolve(event.result); return; }
+                    if (event.status === 'error') { fail(new Error(event.message || 'Processing failed')); return; }
+                    if (event.status === 'transcribed' && onTranscribed) {
+                      reader.cancel();
+                      onTranscribed(event.transcript, event.meetingTitle, event.verbosity);
+                      return;
+                    }
+                  } catch { /* ignore malformed line */ }
+                }
+                pump();
+              }).catch(fail);
+            }
+            pump();
           }
-          pump();
+
+          pumpStream(streamRes.body!.getReader(), (transcript, meetingTitle, verbosity) => {
+            // Start second request in a fresh Vercel function invocation
+            apiFetch('/api/zoho-meeting/generate-mom', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ transcript, meetingTitle, verbosity }),
+            }).then(momRes => {
+              if (!momRes.ok) { fail(new Error(`MoM generation failed: ${momRes.status}`)); return; }
+              pumpStream(momRes.body!.getReader());
+            }).catch(fail);
+          });
         });
       } else if (data.type === 'link') {
         setMeetingMoMMessage('Generating MoM from link...');

@@ -602,7 +602,7 @@ zohoMeetingRouter.post('/process', async (req, res) => {
 
         let result: { transcript: string; audioPath: string };
         try {
-            result = await transcribeVideo(tmpFile);
+            result = await transcribeVideo(tmpFile, token);
         } finally {
             clearInterval(heartbeat);
         }
@@ -619,14 +619,6 @@ zohoMeetingRouter.post('/process', async (req, res) => {
         try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
         try { if (result.audioPath) fs.unlinkSync(result.audioPath); } catch { /* ignore */ }
 
-        // Fallback to Zoho transcript (authenticated — same token required)
-        if (!transcript?.trim() && transcriptUrl) {
-            send({ status: 'processing', progress: 80, message: 'Whisper returned empty — trying Zoho transcript fallback...' });
-            const txtRes = await meetingFetch(transcriptUrl, {}, token);
-            if (txtRes.ok) transcript = await txtRes.text();
-            console.log(`📝 Zoho fallback transcript length: ${transcript?.trim().length ?? 0} chars`);
-        }
-
         if (!transcript?.trim()) {
             throw new Error('Whisper returned an empty transcript. The audio may be silent or the video has no speech track.');
         }
@@ -636,8 +628,8 @@ zohoMeetingRouter.post('/process', async (req, res) => {
 
         send({ status: 'processing', progress: 82, message: `Transcript ready (${transcriptLen} chars). Generating MoM...`, transcriptPreview: transcript.trim().slice(0, 300) });
 
-        send({ status: 'processing', progress: 85, message: 'Generating Minutes of Meeting with GPT-4o...' });
-        console.log('🤖 Generating MoM with GPT-4o...');
+        send({ status: 'processing', progress: 85, message: 'Generating Minutes of Meeting with AI...' });
+        console.log('🤖 Generating MoM with PlatformAI...');
         const momData = await generateMeetingMoM({
             transcript,
             meetingTitle: meetingTitle || 'Zoho Meeting Recording',

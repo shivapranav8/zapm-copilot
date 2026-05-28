@@ -1,8 +1,6 @@
 import fs from 'fs';
 import os from 'os';
-import OpenAI from 'openai';
 import path from 'path';
-import chunk from 'lodash/chunk';
 import ffmpeg from 'fluent-ffmpeg';
 import { extractAudioFromVideo } from './videoProcessing';
 try {
@@ -12,40 +10,53 @@ try {
     console.warn('⚠️  Could not set ffmpeg path (likely running bundled Mac binary on Linux Catalyst). Video processing will fail.');
 }
 
-// Lazy OpenAI client — initialized only when actually used (not at startup)
-let _openai: OpenAI | null = null;
-function getOpenAI() {
-    if (!_openai) {
-        _openai = new OpenAI({
-            apiKey: process.env.OPENAI_API_KEY,
-            timeout: 20 * 60 * 1000,
-        });
-    }
-    return _openai;
-}
+const PLATFORM_AI_BASE = 'https://platformai.zoho.in/internalapi';
+const PORTAL_ID = process.env.ZOHO_PLATFORM_AI_PORTAL_ID || 'ZAPM';
 
 /**
- * Helper to call Whisper API with automatic retries for stream connection errors
+ * Call PlatformAI transcript endpoint with retries.
+ * Endpoint: POST /internalapi/v2/ai/transcript
+ * Accepts multipart/form-data with a `file` field.
+ * Returns the transcript text.
  */
-async function callWhisperWithRetry(filePath: string, maxRetries = 3): Promise<string> {
+async function callPlatformAITranscript(filePath: string, zohoToken: string, maxRetries = 3): Promise<string> {
     let lastError: any;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        const audioStream = fs.createReadStream(filePath);
         try {
-            const response = await getOpenAI().audio.translations.create({
-                file: audioStream,
-                model: 'whisper-1',
-                response_format: 'text',
+            const fileBuffer = fs.readFileSync(filePath);
+            const fileName = path.basename(filePath);
+            const mimeType = fileName.endsWith('.mp3') ? 'audio/mpeg' : 'audio/wav';
+
+            const formData = new FormData();
+            formData.append('file', new Blob([fileBuffer], { type: mimeType }), fileName);
+
+            const res = await fetch(`${PLATFORM_AI_BASE}/v2/ai/transcript`, {
+                method: 'POST',
+                headers: {
+                    'portal_id': PORTAL_ID,
+                    'Authorization': `Zoho-oauthtoken ${zohoToken}`,
+                },
+                body: formData,
             });
-            return response as unknown as string;
+
+            const data = await res.json() as any;
+
+            if (!res.ok) {
+                throw new Error(`PlatformAI transcript error ${res.status}: ${data?.error?.message || JSON.stringify(data)}`);
+            }
+
+            const transcript = data?.data?.transcript;
+            if (transcript === undefined || transcript === null) {
+                throw new Error(`Unexpected PlatformAI transcript response: ${JSON.stringify(data).slice(0, 200)}`);
+            }
+
+            return transcript as string;
         } catch (error: any) {
             lastError = error;
-            console.warn(`⚠️ Whisper API attempt ${attempt}/${maxRetries} failed: ${error.message}`);
+            console.warn(`⚠️ PlatformAI transcript attempt ${attempt}/${maxRetries} failed: ${error.message}`);
             if (attempt < maxRetries) {
-                await new Promise(r => setTimeout(r, attempt * 3000)); // Exponential-ish backoff
+                await new Promise(r => setTimeout(r, attempt * 3000));
             }
-        } finally {
-            audioStream.destroy();
         }
     }
     throw lastError;
@@ -54,7 +65,7 @@ async function callWhisperWithRetry(filePath: string, maxRetries = 3): Promise<s
 /**
  * Transcribe large audio file by splitting into chunks
  */
-async function transcribeLargeAudio(audioFilePath: string): Promise<string> {
+async function transcribeLargeAudio(audioFilePath: string, zohoToken: string): Promise<string> {
     console.log('📦 File is too large for single request (> 24MB). Splitting into chunks...');
 
     const chunkDir = path.join(path.dirname(audioFilePath), 'chunks_' + Date.now());
@@ -63,7 +74,7 @@ async function transcribeLargeAudio(audioFilePath: string): Promise<string> {
     }
 
     try {
-        // Split audio into 20-minute chunks (approx 5MB at 32k bitrate — well under Whisper's 25MB limit)
+        // Split audio into 20-minute chunks (approx 5MB at 32k bitrate)
         await new Promise<void>((resolve, reject) => {
             ffmpeg(audioFilePath)
                 .output(path.join(chunkDir, 'chunk_%03d.mp3'))
@@ -89,22 +100,21 @@ async function transcribeLargeAudio(audioFilePath: string): Promise<string> {
         const results = await Promise.all(
             chunkFiles.map(async (chunkPath, i) => {
                 const stats = fs.statSync(chunkPath);
-                console.log(`🎤 Chunk ${i + 1}: starting (${(stats.size/1024/1024).toFixed(2)} MB)...`);
+                console.log(`🎤 Chunk ${i + 1}: starting (${(stats.size / 1024 / 1024).toFixed(2)} MB)...`);
                 const t = Date.now();
-                const text = await callWhisperWithRetry(chunkPath);
-                console.log(`✅ Chunk ${i + 1} done in ${Math.round((Date.now() - t)/1000)}s`);
+                const text = await callPlatformAITranscript(chunkPath, zohoToken);
+                console.log(`✅ Chunk ${i + 1} done in ${Math.round((Date.now() - t) / 1000)}s`);
                 return text;
             })
         );
 
-        console.log(`✅ All ${chunkFiles.length} chunks transcribed in ${Math.round((Date.now() - startAll)/1000)}s`);
+        console.log(`✅ All ${chunkFiles.length} chunks transcribed in ${Math.round((Date.now() - startAll) / 1000)}s`);
         return results.join(' ').trim();
 
     } catch (error) {
         console.error('❌ Chunk transcription failed:', error);
         throw error;
     } finally {
-        // Cleanup chunks
         try {
             if (fs.existsSync(chunkDir)) {
                 fs.rmSync(chunkDir, { recursive: true, force: true });
@@ -117,31 +127,24 @@ async function transcribeLargeAudio(audioFilePath: string): Promise<string> {
 }
 
 /**
- * Transcribe audio file using OpenAI Whisper API
- * Supports multilingual audio including Tanglish (Tamil + English)
+ * Transcribe audio file using PlatformAI Whisper endpoint
  */
-export async function transcribeAudio(audioFilePath: string): Promise<string> {
-    console.log('\n🎤 Transcribing audio with OpenAI Whisper...');
+export async function transcribeAudio(audioFilePath: string, zohoToken: string): Promise<string> {
+    console.log('\n🎤 Transcribing audio with PlatformAI Whisper...');
     console.log(`📁 File: ${audioFilePath}`);
 
     try {
-        // Check file size
         const stats = fs.statSync(audioFilePath);
-        const fileSizeInBytes = stats.size;
-        const fileSizeInMB = fileSizeInBytes / (1024 * 1024);
-
+        const fileSizeInMB = stats.size / (1024 * 1024);
         console.log(`📊 File size: ${fileSizeInMB.toFixed(2)} MB`);
 
-        // If file > 24MB, use chunking (limit is 25MB)
         if (fileSizeInMB > 24) {
-            return await transcribeLargeAudio(audioFilePath);
+            return await transcribeLargeAudio(audioFilePath, zohoToken);
         }
 
-        const transcription = await callWhisperWithRetry(audioFilePath);
-
+        const transcription = await callPlatformAITranscript(audioFilePath, zohoToken);
         console.log('✅ Transcription completed');
         console.log(`📝 Transcript length: ${transcription.length} characters`);
-
         return transcription;
     } catch (error) {
         console.error('❌ Transcription failed:', error);
@@ -152,73 +155,30 @@ export async function transcribeAudio(audioFilePath: string): Promise<string> {
 /**
  * Transcribe video file (extracts audio first, then transcribes)
  */
-export async function transcribeVideo(videoFilePath: string): Promise<{ transcript: string; audioPath: string }> {
+export async function transcribeVideo(videoFilePath: string, zohoToken: string): Promise<{ transcript: string; audioPath: string }> {
     console.log('\n🎬 Processing video file...');
     console.log(`📁 Video: ${videoFilePath}`);
 
     const videoStats = fs.statSync(videoFilePath);
     const videoSizeMB = videoStats.size / (1024 * 1024);
 
-    // Skip ffmpeg entirely if the video file is under 25MB — send directly to Whisper
-    // This saves 2+ minutes of ffmpeg processing on Vercel
+    // Skip ffmpeg if video is under 25MB — send directly to PlatformAI
     if (videoSizeMB <= 24) {
-        console.log(`⚡ Video is ${videoSizeMB.toFixed(1)} MB — sending directly to Whisper (no ffmpeg needed)`);
+        console.log(`⚡ Video is ${videoSizeMB.toFixed(1)} MB — sending directly to PlatformAI (no ffmpeg needed)`);
         try {
-            const transcript = await callWhisperWithRetry(videoFilePath);
+            const transcript = await callPlatformAITranscript(videoFilePath, zohoToken);
             return { transcript, audioPath: videoFilePath };
         } catch (error) {
             console.warn('⚠️  Direct video transcription failed, falling back to ffmpeg:', error);
-            // fall through to ffmpeg path
         }
     }
 
     try {
-        // Extract audio from video via ffmpeg
         const audioPath = await extractAudioFromVideo(videoFilePath);
-
-        // Transcribe the extracted audio
-        const transcript = await transcribeAudio(audioPath);
-
+        const transcript = await transcribeAudio(audioPath, zohoToken);
         return { transcript, audioPath };
     } catch (error) {
         console.error('❌ Video transcription failed:', error);
         throw new Error(`Failed to transcribe video: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-}
-
-/**
- * Transcribe audio from URL (download first, then transcribe)
- */
-export async function transcribeAudioFromUrl(audioUrl: string): Promise<string> {
-    console.log('\n🌐 Downloading audio from URL...');
-    console.log(`🔗 URL: ${audioUrl}`);
-
-    try {
-        // Download the audio file
-        const response = await fetch(audioUrl);
-        if (!response.ok) {
-            throw new Error(`Failed to download audio: ${response.statusText}`);
-        }
-
-        const arrayBuffer = await response.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-
-        // Save temporarily
-        const tempFilePath = path.join(os.tmpdir(), `meeting_audio_${Date.now()}.mp3`);
-        fs.writeFileSync(tempFilePath, buffer);
-
-        console.log(`✅ Audio downloaded to: ${tempFilePath}`);
-
-        // Transcribe
-        const transcript = await transcribeAudio(tempFilePath);
-
-        // Clean up temp file
-        fs.unlinkSync(tempFilePath);
-        console.log('🗑️  Temporary file deleted');
-
-        return transcript;
-    } catch (error) {
-        console.error('❌ Failed to download/transcribe audio:', error);
-        throw new Error(`Failed to process audio from URL: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
 }

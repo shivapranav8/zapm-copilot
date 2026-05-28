@@ -66,7 +66,7 @@ async function callPlatformAITranscript(filePath: string, zohoToken: string, max
  * Transcribe large audio file by splitting into chunks
  */
 async function transcribeLargeAudio(audioFilePath: string, zohoToken: string): Promise<string> {
-    console.log('📦 File too large for single request (> 5MB). Splitting into 5-min chunks...');
+    console.log('📦 File too large for single request (> 3MB). Splitting into 5-min chunks...');
 
     const chunkDir = path.join(path.dirname(audioFilePath), 'chunks_' + Date.now());
     if (!fs.existsSync(chunkDir)) {
@@ -79,7 +79,7 @@ async function transcribeLargeAudio(audioFilePath: string, zohoToken: string): P
             ffmpeg(audioFilePath)
                 .output(path.join(chunkDir, 'chunk_%03d.mp3'))
                 .audioCodec('libmp3lame')
-                .audioBitrate('32k')
+                .audioBitrate('16k')
                 .audioFrequency(16000)
                 .audioChannels(1)
                 .format('segment')
@@ -138,8 +138,8 @@ export async function transcribeAudio(audioFilePath: string, zohoToken: string):
         const fileSizeInMB = stats.size / (1024 * 1024);
         console.log(`📊 File size: ${fileSizeInMB.toFixed(2)} MB`);
 
-        // Chunk anything > 5 MB — PlatformAI times out on large single files
-        if (fileSizeInMB > 5) {
+        // Chunk anything > 3 MB — PlatformAI times out on large single files
+        if (fileSizeInMB > 3) {
             return await transcribeLargeAudio(audioFilePath, zohoToken);
         }
 

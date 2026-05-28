@@ -47,7 +47,7 @@ export async function extractAudioFromVideo(videoPath: string): Promise<string> 
             ffmpeg(videoPath)
                 .output(audioPath)
                 .audioCodec('libmp3lame')
-                .audioBitrate('32k')   // 32k is enough for speech; 4× smaller than 128k → faster ffmpeg + smaller Whisper chunks
+                .audioBitrate('16k')   // 16k is enough for speech transcription; halves file size vs 32k
                 .audioFrequency(16000) // 16kHz mono — Whisper's native sample rate
                 .audioChannels(1)
                 .noVideo()

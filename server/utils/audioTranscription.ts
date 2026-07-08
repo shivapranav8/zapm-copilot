@@ -176,6 +176,8 @@ export async function transcribeVideo(videoFilePath: string, zohoToken: string):
 
     try {
         const audioPath = await extractAudioFromVideo(videoFilePath);
+        // Delete video immediately after audio extraction to free /tmp space on Vercel (512MB limit)
+        try { fs.unlinkSync(videoFilePath); console.log('🗑️  Deleted video file to free /tmp space'); } catch { /* ignore */ }
         const transcript = await transcribeAudio(audioPath, zohoToken);
         return { transcript, audioPath };
     } catch (error) {

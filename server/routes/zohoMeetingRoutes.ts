@@ -2,11 +2,18 @@ import { Router, Request } from 'express';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { Readable } from 'stream';
 import { v4 as uuidv4 } from 'uuid';
-import { transcribeVideo } from '../utils/audioTranscription';
+import ffmpegCmd from 'fluent-ffmpeg';
+import { transcribeVideo, transcribeAudio } from '../utils/audioTranscription';
 import { generateMeetingMoM } from '../agents/meetingMoM';
 import { saveMoM } from '../utils/storage';
 import { getJob } from '../utils/jobStore';
+
+try {
+    const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
+    ffmpegCmd.setFfmpegPath(ffmpegInstaller.path);
+} catch (e) { /* bundled binary unavailable */ }
 
 export const zohoMeetingRouter = Router();
 
@@ -715,35 +722,8 @@ zohoMeetingRouter.post('/process', async (req, res) => {
         const contentType = dlResponse.headers.get('content-type') || '';
 
         if (!dlResponse.body) throw new Error('Download response has no body');
-        const fileStream = fs.createWriteStream(tmpFile);
-        const reader = dlResponse.body.getReader();
-        let sizeInBytes = 0;
-        
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (value) {
-                fileStream.write(value);
-                sizeInBytes += value.length;
-            }
-        }
-        fileStream.end();
-        await new Promise(resolve => fileStream.on('finish', resolve));
 
-        const sizeMB = (sizeInBytes / 1024 / 1024).toFixed(2);
-        console.log(`✅ Downloaded: ${sizeMB} MB`);
-
-        if (sizeInBytes < 10000) {
-            throw new Error(`Downloaded file is too small (${sizeMB} MB) — likely not a real video file. The URL may have expired.`);
-        }
-
-        send({ status: 'processing', progress: 35, message: `Downloaded (${sizeMB} MB). Extracting audio...` });
-        console.log('🎵 Extracting audio with ffmpeg...');
-
-        send({ status: 'processing', progress: 45, message: 'Transcribing audio with Whisper...' });
-        console.log('🎙️  Transcribing with Whisper...');
-
-        // Heartbeat: tick progress from 45→78% while Whisper runs so the UI doesn't stall
+        // Heartbeat helper — ticks progress so the UI doesn't stall during long operations
         let heartbeatProgress = 45;
         const transcribeMessages = [
             'Transcribing audio with Whisper...',
@@ -766,13 +746,90 @@ zohoMeetingRouter.post('/process', async (req, res) => {
             }
         }, 10000); // every 10s
 
-        let result: { transcript: string; audioPath: string };
         try {
+        if (isFromMeetingLink) {
+            // ── Stream-to-ffmpeg path: pipe download → ffmpeg → mp3 (no video on disk) ──
+            // Avoids /tmp space issues on Vercel — large videos never touch the filesystem
+            const audioPath = path.join(os.tmpdir(), `zoho_rec_${jobId}.mp3`);
+
+            send({ status: 'processing', progress: 20, message: 'Streaming video to audio extractor (no disk save)...' });
+            console.log('🎵 Piping download stream directly to ffmpeg (no video file on disk)...');
+
+            const nodeStream = Readable.fromWeb(dlResponse.body as any);
+
+            await new Promise<void>((resolve, reject) => {
+                ffmpegCmd(nodeStream)
+                    .inputFormat('mp4')
+                    .output(audioPath)
+                    .audioCodec('libmp3lame')
+                    .audioBitrate('16k')
+                    .audioFrequency(16000)
+                    .audioChannels(1)
+                    .noVideo()
+                    .on('stderr', (line: string) => {
+                        // Log ffmpeg progress lines
+                        if (line.includes('time=')) console.log(`  ffmpeg: ${line.trim()}`);
+                    })
+                    .on('end', () => {
+                        console.log('✅ Audio extraction from stream complete');
+                        resolve();
+                    })
+                    .on('error', (err: Error) => {
+                        console.error('❌ ffmpeg stream error:', err.message);
+                        reject(new Error(`ffmpeg stream extraction failed: ${err.message}`));
+                    })
+                    .run();
+            });
+
+            const audioStats = fs.statSync(audioPath);
+            console.log(`📊 Audio file: ${(audioStats.size / 1024 / 1024).toFixed(2)} MB`);
+
+            send({ status: 'processing', progress: 45, message: 'Transcribing audio with Whisper...' });
+            console.log('🎙️  Transcribing with Whisper...');
+
+            transcript = await transcribeAudio(audioPath, token);
+            try { fs.unlinkSync(audioPath); } catch { /* ignore */ }
+
+        } else {
+            // ── File-based path: download to /tmp, then transcribe (existing flow) ──
+            const fileStream = fs.createWriteStream(tmpFile);
+            const reader = dlResponse.body.getReader();
+            let sizeInBytes = 0;
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                if (value) {
+                    fileStream.write(value);
+                    sizeInBytes += value.length;
+                }
+            }
+            fileStream.end();
+            await new Promise(resolve => fileStream.on('finish', resolve));
+
+            const sizeMB = (sizeInBytes / 1024 / 1024).toFixed(2);
+            console.log(`✅ Downloaded: ${sizeMB} MB`);
+
+            if (sizeInBytes < 10000) {
+                throw new Error(`Downloaded file is too small (${sizeMB} MB) — likely not a real video file. The URL may have expired.`);
+            }
+
+            send({ status: 'processing', progress: 35, message: `Downloaded (${sizeMB} MB). Extracting audio...` });
+            console.log('🎵 Extracting audio with ffmpeg...');
+
+            send({ status: 'processing', progress: 45, message: 'Transcribing audio with Whisper...' });
+            console.log('🎙️  Transcribing with Whisper...');
+
+            let result: { transcript: string; audioPath: string };
             result = await transcribeVideo(tmpFile, token);
+            transcript = result.transcript;
+
+            try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+            try { if (result.audioPath) fs.unlinkSync(result.audioPath); } catch { /* ignore */ }
+        }
         } finally {
             clearInterval(heartbeat);
         }
-        transcript = result.transcript;
 
         // Dots-only transcript = Whisper detected silence — audio track was empty
         const cleanedTranscript = transcript?.replace(/[\s.]+/g, '').trim() ?? '';
@@ -782,8 +839,6 @@ zohoMeetingRouter.post('/process', async (req, res) => {
         const transcriptLen = transcript?.trim().length ?? 0;
         console.log(`📝 Transcript length: ${transcriptLen} chars`);
         console.log(`📝 Transcript preview: ${transcript?.slice(0, 300)}`);
-        try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
-        try { if (result.audioPath) fs.unlinkSync(result.audioPath); } catch { /* ignore */ }
 
         if (!transcript?.trim()) {
             throw new Error('Whisper returned an empty transcript. The audio may be silent or the video has no speech track.');

@@ -503,18 +503,24 @@ zohoMeetingRouter.post('/process', async (req, res) => {
         let finalDownloadUrl = downloadUrl;
 
         // ── Resolve from meetingLink (public recording URL) ──────────────
+        // Flag so the download step knows to try without auth if 401
+        let isFromMeetingLink = false;
+        let linkRecordingId = '';
+        let linkOrg = '';
+        let linkDomain = '';
+
         if (!finalDownloadUrl && !recordingKey && meetingLink) {
+            isFromMeetingLink = true;
             console.log(`🔗 Resolving meeting link: ${meetingLink}`);
             send({ status: 'processing', progress: 7, message: 'Parsing meeting link...' });
 
             // Parse recordingId and org from Zoho Meeting public URLs
             // Supports: meeting.zohocorp.com, meeting.zoho.in, meeting.zoho.com
-            let linkRecordingId = '';
-            let linkOrg = '';
             try {
                 const parsed = new URL(meetingLink);
                 linkRecordingId = parsed.searchParams.get('recordingId') || '';
                 linkOrg = parsed.searchParams.get('x-meeting-org') || '';
+                linkDomain = parsed.hostname; // e.g. meeting.zohocorp.com
             } catch {
                 throw new Error('Invalid meeting link URL format.');
             }
@@ -523,9 +529,9 @@ zohoMeetingRouter.post('/process', async (req, res) => {
                 throw new Error('Could not extract recordingId from the meeting link. Expected format: ...?recordingId=XXX&x-meeting-org=YYY');
             }
 
-            console.log(`📋 Parsed link — recordingId: ${linkRecordingId.slice(0, 16)}..., org: ${linkOrg}`);
+            console.log(`📋 Parsed link — recordingId: ${linkRecordingId.slice(0, 16)}..., org: ${linkOrg}, domain: ${linkDomain}`);
 
-            // Strategy 1: List recordings for the org and find a match
+            // Strategy 1: List recordings for the org and find a match by erecordingId
             if (linkOrg && token) {
                 send({ status: 'processing', progress: 9, message: 'Looking up recording via API...' });
                 const apiDomains = [
@@ -538,9 +544,11 @@ zohoMeetingRouter.post('/process', async (req, res) => {
                         const listUrl = `${base}/${linkOrg}/recordings.json`;
                         console.log(`📡 Trying recordings list: ${listUrl}`);
                         const listRes = await meetingFetch(listUrl, {}, token);
+                        console.log(`   → HTTP ${listRes.status}`);
                         if (listRes.ok) {
                             const listData = await listRes.json() as any;
                             const recs: any[] = listData.recordings || listData.data || [];
+                            console.log(`   → ${recs.length} recordings returned`);
                             const match = recs.find((r: any) =>
                                 r.erecordingId === linkRecordingId
                                 || r.recordingId === linkRecordingId
@@ -551,7 +559,7 @@ zohoMeetingRouter.post('/process', async (req, res) => {
                                 finalDownloadUrl = match.downloadUrl || match.download_url || match.recordingUrl || match.recordingLink || '';
                                 console.log(`✅ Found matching recording: "${match.topic || match.title}" → download: ${finalDownloadUrl?.slice(0, 80)}`);
                             } else {
-                                console.log(`ℹ️  ${recs.length} recordings in org, but none matched recordingId`);
+                                console.log(`ℹ️  None matched recordingId. Sample keys: ${recs.slice(0, 3).map((r: any) => r.erecordingId || r.key || r.id).join(', ')}`);
                             }
                         }
                     } catch (e) {
@@ -560,10 +568,41 @@ zohoMeetingRouter.post('/process', async (req, res) => {
                 }
             }
 
-            // Strategy 2: Construct download-accl URL with the recordingId
+            // Strategy 2: Direct recording lookup by ID
+            if (!finalDownloadUrl && linkOrg && token) {
+                const lookupBases = [
+                    `https://${linkDomain}/meeting/api/v2`,                     // same domain as the link
+                    MEETING_RECORDINGS_BASE,
+                    MEETING_API_BASE,
+                ];
+                for (const base of lookupBases) {
+                    if (finalDownloadUrl) break;
+                    try {
+                        const url = `${base}/${linkOrg}/recordings/${linkRecordingId}.json`;
+                        console.log(`📡 Trying direct lookup: ${url}`);
+                        const r = await meetingFetch(url, {}, token);
+                        console.log(`   → HTTP ${r.status}`);
+                        if (r.ok) {
+                            const d = await r.json() as any;
+                            finalDownloadUrl = d.downloadUrl || d.download_url || d.recordingUrl || '';
+                            if (finalDownloadUrl) {
+                                console.log(`✅ Direct lookup found download URL: ${finalDownloadUrl.slice(0, 80)}`);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn(`⚠️  Direct lookup failed:`, e);
+                    }
+                }
+            }
+
+            // Strategy 3: Construct download-accl URLs (try multiple Zoho domains)
             if (!finalDownloadUrl) {
-                console.log('📡 Trying download-accl.zoho.com fallback...');
-                finalDownloadUrl = `https://download-accl.zoho.com/webdownload?event-id=${linkRecordingId}&x-service=meetinglab&x-cli-msg=`;
+                const downloadPatterns = [
+                    `https://download-accl.zoho.in/webdownload?event-id=${linkRecordingId}&x-service=meetinglab&x-cli-msg=`,
+                    `https://download-accl.zoho.com/webdownload?event-id=${linkRecordingId}&x-service=meetinglab&x-cli-msg=`,
+                ];
+                console.log('📡 Trying download-accl fallbacks...');
+                finalDownloadUrl = downloadPatterns[0]; // will try zoho.in first; retry logic below handles 401
             }
         }
 
@@ -588,15 +627,17 @@ zohoMeetingRouter.post('/process', async (req, res) => {
             throw new Error('Could not determine download URL for this recording.');
         }
 
-        // SSRF guard — only allow Zoho-owned hostnames
-        try {
-            const { hostname } = new URL(finalDownloadUrl);
-            if (!hostname.endsWith('.zoho.com') && !hostname.endsWith('.zoho.in') && !hostname.endsWith('.zohocorp.com')) {
-                throw new Error(`Blocked download from untrusted host: ${hostname}`);
+        // SSRF guard for non-meetingLink flow (meetingLink has per-attempt SSRF checks)
+        if (!isFromMeetingLink) {
+            try {
+                const { hostname } = new URL(finalDownloadUrl);
+                if (!hostname.endsWith('.zoho.com') && !hostname.endsWith('.zoho.in') && !hostname.endsWith('.zohocorp.com')) {
+                    throw new Error(`Blocked download from untrusted host: ${hostname}`);
+                }
+            } catch (urlErr) {
+                if (urlErr instanceof Error && urlErr.message.startsWith('Blocked')) throw urlErr;
+                throw new Error('Invalid download URL format.');
             }
-        } catch (urlErr) {
-            if (urlErr instanceof Error && urlErr.message.startsWith('Blocked')) throw urlErr;
-            throw new Error('Invalid download URL format.');
         }
 
         send({ status: 'processing', progress: 15, message: 'Downloading recording...' });
@@ -604,17 +645,74 @@ zohoMeetingRouter.post('/process', async (req, res) => {
 
         let transcript = '';
 
-        // Use authenticated fetch — Zoho recording downloads require the OAuth token
-        const dlResponse = await meetingFetch(finalDownloadUrl, {}, token);
-        console.log(`📡 Download HTTP status: ${dlResponse.status}, Content-Type: ${dlResponse.headers.get('content-type')}`);
-        if (!dlResponse.ok) {
-            throw new Error(`Download failed (HTTP ${dlResponse.status}). Re-login after adding new scopes.`);
+        // Build candidate download URLs to try in order
+        // For meeting links: try multiple URLs + with/without auth
+        const downloadAttempts: { url: string; useAuth: boolean; label: string }[] = [];
+
+        if (isFromMeetingLink) {
+            // Try the resolved URL with auth first
+            downloadAttempts.push({ url: finalDownloadUrl, useAuth: true, label: 'resolved URL + auth' });
+            // Try without auth (public recordings may not need it)
+            downloadAttempts.push({ url: finalDownloadUrl, useAuth: false, label: 'resolved URL (no auth)' });
+            // Try download-accl on both domains
+            if (!finalDownloadUrl.includes('download-accl.zoho.in')) {
+                downloadAttempts.push({ url: `https://download-accl.zoho.in/webdownload?event-id=${linkRecordingId}&x-service=meetinglab&x-cli-msg=`, useAuth: true, label: 'download-accl.zoho.in + auth' });
+            }
+            if (!finalDownloadUrl.includes('download-accl.zoho.com')) {
+                downloadAttempts.push({ url: `https://download-accl.zoho.com/webdownload?event-id=${linkRecordingId}&x-service=meetinglab&x-cli-msg=`, useAuth: true, label: 'download-accl.zoho.com + auth' });
+            }
+            // Try the original public URL directly with auth (may redirect to video)
+            downloadAttempts.push({ url: meetingLink!, useAuth: true, label: 'original link + auth' });
+            downloadAttempts.push({ url: meetingLink!, useAuth: false, label: 'original link (no auth)' });
+        } else {
+            downloadAttempts.push({ url: finalDownloadUrl, useAuth: true, label: 'download URL + auth' });
+        }
+
+        let dlResponse: Response | null = null;
+        let lastDlError = '';
+
+        for (const attempt of downloadAttempts) {
+            // SSRF guard for each attempt URL
+            try {
+                const { hostname } = new URL(attempt.url);
+                if (!hostname.endsWith('.zoho.com') && !hostname.endsWith('.zoho.in') && !hostname.endsWith('.zohocorp.com')) {
+                    console.log(`⛔ Skipping untrusted host: ${hostname}`);
+                    continue;
+                }
+            } catch { continue; }
+
+            console.log(`📡 Download attempt: ${attempt.label} → ${attempt.url.slice(0, 100)}`);
+            try {
+                const res = attempt.useAuth
+                    ? await meetingFetch(attempt.url, {}, token)
+                    : await fetch(attempt.url);
+                console.log(`   → HTTP ${res.status}, Content-Type: ${res.headers.get('content-type')}`);
+
+                if (res.ok) {
+                    const ct = res.headers.get('content-type') || '';
+                    if (ct.includes('text/html')) {
+                        console.log(`   → Skipping: returned HTML page, not a video file`);
+                        lastDlError = `${attempt.label}: returned HTML page instead of video`;
+                        continue;
+                    }
+                    dlResponse = res;
+                    console.log(`✅ Download succeeded via: ${attempt.label}`);
+                    break;
+                } else {
+                    lastDlError = `${attempt.label}: HTTP ${res.status}`;
+                    console.log(`   → Failed: HTTP ${res.status}`);
+                }
+            } catch (e) {
+                lastDlError = `${attempt.label}: ${e}`;
+                console.warn(`   → Error: ${e}`);
+            }
+        }
+
+        if (!dlResponse) {
+            throw new Error(`All download attempts failed. Last error: ${lastDlError}. Check Vercel logs for details.`);
         }
 
         const contentType = dlResponse.headers.get('content-type') || '';
-        if (contentType.includes('text/html')) {
-            throw new Error('Download URL returned an HTML page instead of a video — the link may have expired. Please retry.');
-        }
 
         if (!dlResponse.body) throw new Error('Download response has no body');
         const fileStream = fs.createWriteStream(tmpFile);

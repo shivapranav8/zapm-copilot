@@ -455,16 +455,17 @@ zohoMeetingRouter.get('/recordings', async (req, res) => {
 // Streams SSE progress events so the HTTP connection stays open.
 // This prevents Vercel from freezing the CPU between requests.
 zohoMeetingRouter.post('/process', async (req, res) => {
-    const { recordingKey, downloadUrl, transcriptUrl, meetingTitle, verbosity } = req.body as {
+    const { recordingKey, downloadUrl, transcriptUrl, meetingTitle, verbosity, meetingLink } = req.body as {
         recordingKey?: string;
         downloadUrl?: string;
         transcriptUrl?: string;
         meetingTitle?: string;
         verbosity?: 'brief' | 'standard' | 'detailed';
+        meetingLink?: string;
     };
 
-    if (!downloadUrl && !recordingKey) {
-        return res.status(400).json({ error: 'downloadUrl or recordingKey is required' });
+    if (!downloadUrl && !recordingKey && !meetingLink) {
+        return res.status(400).json({ error: 'downloadUrl, recordingKey, or meetingLink is required' });
     }
 
     // Keep connection alive — Vercel won't freeze CPU while streaming
@@ -500,6 +501,73 @@ zohoMeetingRouter.post('/process', async (req, res) => {
         send({ status: 'processing', progress: 5, message: 'Resolving recording URL...' });
 
         let finalDownloadUrl = downloadUrl;
+
+        // ── Resolve from meetingLink (public recording URL) ──────────────
+        if (!finalDownloadUrl && !recordingKey && meetingLink) {
+            console.log(`🔗 Resolving meeting link: ${meetingLink}`);
+            send({ status: 'processing', progress: 7, message: 'Parsing meeting link...' });
+
+            // Parse recordingId and org from Zoho Meeting public URLs
+            // Supports: meeting.zohocorp.com, meeting.zoho.in, meeting.zoho.com
+            let linkRecordingId = '';
+            let linkOrg = '';
+            try {
+                const parsed = new URL(meetingLink);
+                linkRecordingId = parsed.searchParams.get('recordingId') || '';
+                linkOrg = parsed.searchParams.get('x-meeting-org') || '';
+            } catch {
+                throw new Error('Invalid meeting link URL format.');
+            }
+
+            if (!linkRecordingId) {
+                throw new Error('Could not extract recordingId from the meeting link. Expected format: ...?recordingId=XXX&x-meeting-org=YYY');
+            }
+
+            console.log(`📋 Parsed link — recordingId: ${linkRecordingId.slice(0, 16)}..., org: ${linkOrg}`);
+
+            // Strategy 1: List recordings for the org and find a match
+            if (linkOrg && token) {
+                send({ status: 'processing', progress: 9, message: 'Looking up recording via API...' });
+                const apiDomains = [
+                    MEETING_RECORDINGS_BASE,                                    // meeting.zoho.in/meeting/api/v2
+                    'https://meeting.zohocorp.com/meeting/api/v2',
+                ];
+                for (const base of apiDomains) {
+                    if (finalDownloadUrl) break;
+                    try {
+                        const listUrl = `${base}/${linkOrg}/recordings.json`;
+                        console.log(`📡 Trying recordings list: ${listUrl}`);
+                        const listRes = await meetingFetch(listUrl, {}, token);
+                        if (listRes.ok) {
+                            const listData = await listRes.json() as any;
+                            const recs: any[] = listData.recordings || listData.data || [];
+                            const match = recs.find((r: any) =>
+                                r.erecordingId === linkRecordingId
+                                || r.recordingId === linkRecordingId
+                                || r.key === linkRecordingId
+                                || r.id === linkRecordingId
+                            );
+                            if (match) {
+                                finalDownloadUrl = match.downloadUrl || match.download_url || match.recordingUrl || match.recordingLink || '';
+                                console.log(`✅ Found matching recording: "${match.topic || match.title}" → download: ${finalDownloadUrl?.slice(0, 80)}`);
+                            } else {
+                                console.log(`ℹ️  ${recs.length} recordings in org, but none matched recordingId`);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn(`⚠️  API lookup failed:`, e);
+                    }
+                }
+            }
+
+            // Strategy 2: Construct download-accl URL with the recordingId
+            if (!finalDownloadUrl) {
+                console.log('📡 Trying download-accl.zoho.com fallback...');
+                finalDownloadUrl = `https://download-accl.zoho.com/webdownload?event-id=${linkRecordingId}&x-service=meetinglab&x-cli-msg=`;
+            }
+        }
+
+        // ── Resolve from recordingKey (existing dropdown flow) ───────────
         if (!finalDownloadUrl && recordingKey) {
             try {
                 const userKey = await resolveUserKey(token);

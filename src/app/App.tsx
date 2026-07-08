@@ -774,18 +774,66 @@ They can review and provide feedback directly in Cliq!`,
           });
         });
       } else if (data.type === 'link') {
-        setMeetingMoMMessage('Generating MoM from link...');
-        const res = await apiFetch('/api/meeting-mom/generate', {
+        // Route meeting links through the same SSE pipeline as Zoho recordings
+        const streamRes = await apiFetch('/api/zoho-meeting/process', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          body: JSON.stringify({ meetingLink: data.value }),
+          body: JSON.stringify({
+            meetingLink: data.value,
+            meetingTitle: data.title || 'Zoho Meeting Recording',
+          }),
         });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.details || err.error || `Server error ${res.status}`);
+        if (!streamRes.ok) {
+          const err = await streamRes.json().catch(() => ({}));
+          throw new Error((err as any).details || (err as any).error || `Server error ${streamRes.status}`);
         }
-        result = await res.json();
+
+        result = await new Promise<MeetingMoMData>((resolve, reject) => {
+          const decoder = new TextDecoder();
+          const fail = (err: unknown) => reject(err);
+
+          function pumpLinkStream(reader: ReadableStreamDefaultReader<Uint8Array>, onTranscribed?: (transcript: string, meetingTitle: string, verbosity: string) => void) {
+            let buffer = '';
+            function pump() {
+              reader.read().then(({ done, value }) => {
+                if (done) return;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                for (const line of lines) {
+                  if (!line.startsWith('data: ')) continue;
+                  try {
+                    const event = JSON.parse(line.slice(6));
+                    setMeetingMoMProgress(event.progress ?? 0);
+                    setMeetingMoMMessage(event.message ?? '');
+                    if (event.status === 'done') { resolve(event.result); return; }
+                    if (event.status === 'error') { fail(new Error(event.message || 'Processing failed')); return; }
+                    if (event.status === 'transcribed' && onTranscribed) {
+                      reader.cancel();
+                      onTranscribed(event.transcript, event.meetingTitle, event.verbosity);
+                      return;
+                    }
+                  } catch { /* ignore malformed line */ }
+                }
+                pump();
+              }).catch(fail);
+            }
+            pump();
+          }
+
+          pumpLinkStream(streamRes.body!.getReader(), (transcript, title, verbosity) => {
+            apiFetch('/api/zoho-meeting/generate-mom', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ transcript, meetingTitle: title, verbosity }),
+            }).then(momRes => {
+              if (!momRes.ok) { fail(new Error(`MoM generation failed: ${momRes.status}`)); return; }
+              pumpLinkStream(momRes.body!.getReader());
+            }).catch(fail);
+          });
+        });
       } else {
         throw new Error('Video upload via this form is not yet supported. Use a Zoho recording or meeting link.');
       }

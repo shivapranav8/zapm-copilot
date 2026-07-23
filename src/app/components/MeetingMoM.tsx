@@ -1,6 +1,6 @@
 import { apiFetch } from '../../utils/apiFetch';
 import React, { useState } from 'react';
-import { Download, Copy, CheckCircle2, Clock, Users, Edit2, Save, X, RefreshCw } from 'lucide-react';
+import { Download, Copy, CheckCircle2, Clock, Users, Edit2, Save, X, RefreshCw, MessageCircle, Send, Bot, User } from 'lucide-react';
 import { toast } from 'sonner';
 
 export interface ActionItem {
@@ -39,6 +39,11 @@ export function MeetingMoM({ data, onUpdate, onCopy, onDownload }: MeetingMoMPro
   const [editValue, setEditValue] = useState('');
   const [verbosity, setVerbosity] = useState<Verbosity>('brief');
   const [isRegenerating, setIsRegenerating] = useState<string | null>(null);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatEndRef = React.useRef<HTMLDivElement>(null);
 
   const startEdit = (field: string, value: string) => {
     setEditingField(field);
@@ -144,6 +149,40 @@ export function MeetingMoM({ data, onUpdate, onCopy, onDownload }: MeetingMoMPro
     if (isRegenerating === 'full') return;
     setVerbosity(level);
     regenerateFullMoM(level);
+  };
+
+  const handleChatSend = async () => {
+    const question = chatInput.trim();
+    if (!question || chatLoading) return;
+
+    if (!data.transcript) {
+      toast.error('Transcript not available — cannot answer questions.');
+      return;
+    }
+
+    setChatInput('');
+    setChatMessages(prev => [...prev, { role: 'user', content: question }]);
+    setChatLoading(true);
+
+    try {
+      const res = await apiFetch('/api/meeting-mom/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ question, transcript: data.transcript, meetingTitle: data.meetingTitle }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.details || err.error || `Server error ${res.status}`);
+      }
+      const { answer } = await res.json();
+      setChatMessages(prev => [...prev, { role: 'assistant', content: answer }]);
+    } catch (err: any) {
+      setChatMessages(prev => [...prev, { role: 'assistant', content: `Error: ${err.message}` }]);
+    } finally {
+      setChatLoading(false);
+      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+    }
   };
 
   return (
@@ -362,6 +401,94 @@ export function MeetingMoM({ data, onUpdate, onCopy, onDownload }: MeetingMoMPro
             <p className="text-gray-700 text-sm">{data.nextMeeting}</p>
           </div>
         )}
+
+        {/* Chat with Transcript */}
+        <div className="border-t border-gray-100 pt-6">
+          <button
+            onClick={() => setChatOpen(!chatOpen)}
+            className="flex items-center gap-2 text-base font-semibold text-gray-900 hover:text-blue-600 transition-colors"
+          >
+            <MessageCircle className="w-5 h-5" />
+            Ask about this Meeting
+            <span className="text-xs font-normal text-gray-400 ml-1">
+              {chatOpen ? '(collapse)' : '(expand)'}
+            </span>
+          </button>
+
+          {chatOpen && (
+            <div className="mt-4 border border-gray-200 rounded-lg overflow-hidden">
+              {/* Chat Messages */}
+              <div className="max-h-80 overflow-y-auto p-4 space-y-3 bg-gray-50">
+                {chatMessages.length === 0 && (
+                  <div className="text-center py-8">
+                    <MessageCircle className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                    <p className="text-sm text-gray-400">Ask any question about this meeting</p>
+                    <p className="text-xs text-gray-300 mt-1">e.g. "Who was assigned the API task?" or "What was decided about the timeline?"</p>
+                  </div>
+                )}
+                {chatMessages.map((msg, i) => (
+                  <div key={i} className={`flex gap-2.5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    {msg.role === 'assistant' && (
+                      <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <Bot className="w-4 h-4 text-blue-600" />
+                      </div>
+                    )}
+                    <div className={`max-w-[80%] px-3.5 py-2.5 rounded-xl text-sm leading-relaxed ${msg.role === 'user'
+                        ? 'bg-blue-600 text-white rounded-br-sm'
+                        : 'bg-white border border-gray-200 text-gray-700 rounded-bl-sm'
+                      }`}
+                    >
+                      <div className="whitespace-pre-wrap">{msg.content}</div>
+                    </div>
+                    {msg.role === 'user' && (
+                      <div className="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <User className="w-4 h-4 text-gray-600" />
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {chatLoading && (
+                  <div className="flex gap-2.5">
+                    <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                      <Bot className="w-4 h-4 text-blue-600" />
+                    </div>
+                    <div className="bg-white border border-gray-200 px-4 py-3 rounded-xl rounded-bl-sm">
+                      <div className="flex gap-1">
+                        <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div ref={chatEndRef} />
+              </div>
+
+              {/* Chat Input */}
+              <div className="border-t border-gray-200 bg-white p-3 flex gap-2">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleChatSend(); } }}
+                  placeholder="Ask a question about this meeting..."
+                  className="flex-1 px-3.5 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={chatLoading}
+                />
+                <button
+                  onClick={handleChatSend}
+                  disabled={!chatInput.trim() || chatLoading}
+                  className={`px-3.5 py-2 rounded-lg transition-colors flex items-center gap-1.5 text-sm ${chatInput.trim() && !chatLoading
+                      ? 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                    }`}
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

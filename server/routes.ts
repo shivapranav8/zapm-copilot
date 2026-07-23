@@ -351,6 +351,36 @@ Return ONLY valid JSON (no markdown):
     }
 });
 
+// POST /api/meeting-mom/chat - Ask a question about the meeting transcript
+router.post('/meeting-mom/chat', async (req, res) => {
+    try {
+        const { question, transcript, meetingTitle } = req.body;
+        if (!question || !transcript) {
+            return res.status(400).json({ error: 'question and transcript are required' });
+        }
+
+        const { callPlatformAI } = await import('./utils/platformAI.js');
+        const zohoToken = (req as any).session?.zoho?.accessToken;
+
+        const prompt = `You are a helpful meeting assistant. A user is asking a question about a meeting. Answer ONLY based on the transcript provided below. If the answer is not in the transcript, say so clearly.
+
+**Meeting Title**: ${meetingTitle || 'Team Meeting'}
+
+**Meeting Transcript**:
+${transcript}
+
+**User Question**: ${question}
+
+Provide a clear, concise answer. Use bullet points if listing multiple items. Do not make up information not present in the transcript.`;
+
+        const answer = await callPlatformAI(prompt, { temperature: 0.3, zohoToken });
+        res.json({ answer: answer.trim() });
+    } catch (error) {
+        console.error('❌ Error in MoM chat:', error);
+        res.status(500).json({ error: 'Failed to answer question', details: error instanceof Error ? error.message : String(error) });
+    }
+});
+
 // GET /api/mom-history - Get full history
 router.get('/mom-history', async (req, res) => {
     try {

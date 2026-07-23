@@ -21,7 +21,7 @@ const storage = multer.diskStorage({
     }
 });
 
-// File filter - accept only video files
+// File filter - accept video and audio files
 const fileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
     const allowedMimeTypes = [
         'video/mp4',
@@ -30,15 +30,24 @@ const fileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFilterCa
         'video/x-msvideo', // AVI
         'video/x-matroska', // MKV
         'video/webm',
+        'audio/mpeg',      // MP3
+        'audio/mp3',
+        'audio/wav',
+        'audio/x-wav',
+        'audio/ogg',
+        'audio/webm',
+        'audio/m4a',
+        'audio/x-m4a',
+        'audio/mp4',       // M4A
     ];
 
-    const allowedExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.mpeg', '.mpg'];
+    const allowedExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.mpeg', '.mpg', '.mp3', '.wav', '.ogg', '.m4a'];
     const ext = path.extname(file.originalname).toLowerCase();
 
     if (allowedMimeTypes.includes(file.mimetype) || allowedExtensions.includes(ext)) {
         cb(null, true);
     } else {
-        cb(new Error('Invalid file type. Only video files are allowed (MP4, MOV, AVI, MKV, WebM).'));
+        cb(new Error('Invalid file type. Supported: MP4, MOV, AVI, MKV, WebM, MP3, WAV, M4A, OGG.'));
     }
 };
 

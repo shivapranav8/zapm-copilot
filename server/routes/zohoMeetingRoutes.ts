@@ -9,6 +9,7 @@ import { transcribeVideo, transcribeAudio } from '../utils/audioTranscription';
 import { generateMeetingMoM } from '../agents/meetingMoM';
 import { saveMoM } from '../utils/storage';
 import { getJob } from '../utils/jobStore';
+import { upload, cleanupFile } from '../utils/multerConfig';
 
 try {
     const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
@@ -901,6 +902,108 @@ zohoMeetingRouter.post('/generate-mom', async (req, res) => {
     } catch (err) {
         const msg = err instanceof Error ? err.message : 'Unknown error';
         console.error('❌ MoM generation error:', msg);
+        send({ status: 'error', message: msg });
+    } finally {
+        res.end();
+    }
+});
+
+// ─── POST /api/zoho-meeting/upload ───────────────────────────────────────────
+// Accepts a video file upload, transcribes it, and streams SSE progress events.
+zohoMeetingRouter.post('/upload', (req, res, next) => {
+    upload.single('video')(req, res, (err) => {
+        if (err) {
+            return res.status(400).json({ error: err.message });
+        }
+        next();
+    });
+}, async (req, res) => {
+    const file = (req as any).file as Express.Multer.File | undefined;
+    if (!file) {
+        return res.status(400).json({ error: 'No video file uploaded' });
+    }
+
+    const meetingTitle = (req.body?.meetingTitle as string) || file.originalname || 'Uploaded Recording';
+    const verbosity = (req.body?.verbosity as string) || 'brief';
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const send = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+    const token = resolveToken(req);
+
+    // Heartbeat to keep connection alive
+    let heartbeatProgress = 30;
+    const heartbeatMessages = [
+        'Transcribing audio with Whisper...',
+        'Processing speech to text...',
+        'Still transcribing — large files take a moment...',
+        'Almost done transcribing...',
+    ];
+    let heartbeatTick = 0;
+    const heartbeat = setInterval(() => {
+        if (heartbeatProgress < 78) {
+            heartbeatProgress = Math.min(78, heartbeatProgress + 4);
+            send({
+                status: 'processing',
+                progress: heartbeatProgress,
+                message: heartbeatMessages[heartbeatTick % heartbeatMessages.length],
+            });
+            heartbeatTick++;
+        }
+    }, 10000);
+
+    try {
+        const sizeMB = (file.size / 1024 / 1024).toFixed(2);
+        const ext = path.extname(file.originalname).toLowerCase();
+        const isAudio = ['.mp3', '.wav', '.ogg', '.m4a'].includes(ext)
+            || file.mimetype.startsWith('audio/');
+
+        send({ status: 'processing', progress: 5, message: `${isAudio ? 'Audio' : 'Video'} uploaded. Processing...` });
+        console.log(`📁 Uploaded ${isAudio ? 'audio' : 'video'}: ${file.originalname} (${sizeMB} MB) → ${file.path}`);
+
+        let transcript: string;
+
+        if (isAudio) {
+            // Audio file — skip ffmpeg, transcribe directly
+            send({ status: 'processing', progress: 20, message: `Audio file detected (${sizeMB} MB). Transcribing with Whisper...` });
+            transcript = await transcribeAudio(file.path, token);
+            cleanupFile(file.path);
+        } else {
+            // Video file — extract audio then transcribe
+            send({ status: 'processing', progress: 15, message: `Uploaded (${sizeMB} MB). Extracting audio...` });
+            send({ status: 'processing', progress: 30, message: 'Transcribing audio with Whisper...' });
+            const result = await transcribeVideo(file.path, token);
+            transcript = result.transcript;
+            cleanupFile(file.path);
+            if (result.audioPath && result.audioPath !== file.path) {
+                cleanupFile(result.audioPath);
+            }
+        }
+
+        clearInterval(heartbeat);
+
+        const cleanedTranscript = transcript?.replace(/[\s.]+/g, '').trim() ?? '';
+        if (cleanedTranscript.length < 10) {
+            throw new Error('Audio track appears to be silent. The recording may have no audio.');
+        }
+        if (!transcript?.trim() || transcript.trim().length < 100) {
+            throw new Error(`Transcript too short (${transcript?.trim().length || 0} chars) — audio may be silent or corrupted.`);
+        }
+
+        const transcriptLen = transcript.trim().length;
+        console.log(`📝 Upload transcript length: ${transcriptLen} chars`);
+
+        send({ status: 'transcribed', progress: 82, message: `Transcript ready (${transcriptLen} chars). Generating MoM...`, transcript: transcript.trim(), meetingTitle, verbosity });
+        console.log('✅ Upload transcription done — handing off to /generate-mom');
+    } catch (err) {
+        clearInterval(heartbeat);
+        cleanupFile(file.path);
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        console.error('❌ Upload processing error:', msg);
         send({ status: 'error', message: msg });
     } finally {
         res.end();

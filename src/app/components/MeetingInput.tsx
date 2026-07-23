@@ -37,7 +37,7 @@ function formatStartTime(raw: string): string {
 }
 
 interface MeetingInputProps {
-  onSubmit: (data: { type: 'link' | 'video' | 'zoho'; value: string; title?: string; key?: string; transcriptUrl?: string }) => void;
+  onSubmit: (data: { type: 'link' | 'video' | 'zoho'; value: string; title?: string; key?: string; transcriptUrl?: string; file?: File }) => void;
   onClose: () => void;
 }
 
@@ -57,7 +57,7 @@ export function MeetingInput({ onSubmit, onClose }: MeetingInputProps) {
     if (inputType === 'link' && meetingLink.trim()) {
       onSubmit({ type: 'link', value: meetingLink.trim() });
     } else if (inputType === 'video' && videoFile) {
-      onSubmit({ type: 'video', value: videoFile.name });
+      onSubmit({ type: 'video', value: videoFile.name, file: videoFile });
     } else if (inputType === 'zoho' && selectedRecording) {
       onSubmit({ type: 'zoho', value: selectedRecording.recordingUrl, title: selectedRecording.meetingTitle, key: selectedRecording.id, transcriptUrl: selectedRecording.transcriptUrl });
     }
@@ -77,7 +77,7 @@ export function MeetingInput({ onSubmit, onClose }: MeetingInputProps) {
     setIsDragging(false);
 
     const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith('video/')) {
+    if (file && (file.type.startsWith('video/') || file.type.startsWith('audio/'))) {
       setVideoFile(file);
     }
   };
@@ -182,7 +182,7 @@ export function MeetingInput({ onSubmit, onClose }: MeetingInputProps) {
               </div>
             </button>
 
-            {/* <button
+            <button
               type="button"
               onClick={() => setInputType('video')}
               className={`flex-1 p-4 border-2 rounded-lg transition-all ${inputType === 'video'
@@ -196,10 +196,10 @@ export function MeetingInput({ onSubmit, onClose }: MeetingInputProps) {
                   <div className={`font-medium ${inputType === 'video' ? 'text-blue-600' : 'text-gray-700'}`}>
                     Video Upload
                   </div>
-                  <div className="text-xs text-gray-500">MP4, MOV, AVI, etc.</div>
+                  <div className="text-xs text-gray-500">MP4, MP3, MOV, etc.</div>
                 </div>
               </div>
-            </button> */}
+            </button>
 
             <button
               type="button"
@@ -241,11 +241,11 @@ export function MeetingInput({ onSubmit, onClose }: MeetingInputProps) {
           </div>
         )}
 
-        {/* Video Upload */}
+        {/* Video / Audio Upload */}
         {inputType === 'video' && (
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Video Recording
+              Video / Audio Recording
             </label>
 
             {!videoFile ? (
@@ -260,19 +260,19 @@ export function MeetingInput({ onSubmit, onClose }: MeetingInputProps) {
               >
                 <Upload className="w-12 h-12 text-gray-400 mx-auto mb-4" />
                 <p className="text-sm text-gray-600 mb-2">
-                  Drag and drop your video file here, or
+                  Drag and drop your video or audio file here, or
                 </p>
                 <label className="inline-block px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 cursor-pointer transition-colors">
                   Browse Files
                   <input
                     type="file"
-                    accept="video/*"
+                    accept="video/*,audio/*"
                     onChange={handleFileSelect}
                     className="hidden"
                   />
                 </label>
                 <p className="text-xs text-gray-500 mt-3">
-                  Supported formats: MP4, MOV, AVI, MKV (Max 500MB)
+                  Supported: MP4, MOV, AVI, MKV, MP3, WAV, M4A (Max 500MB)
                 </p>
               </div>
             ) : (

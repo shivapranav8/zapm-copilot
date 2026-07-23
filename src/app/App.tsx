@@ -697,7 +697,7 @@ They can review and provide feedback directly in Cliq!`,
   };
 
   // Meeting MoM Handlers
-  const handleMeetingMoMSubmit = async (data: { type: 'link' | 'video' | 'zoho'; value: string; title?: string; key?: string; transcriptUrl?: string }) => {
+  const handleMeetingMoMSubmit = async (data: { type: 'link' | 'video' | 'zoho'; value: string; title?: string; key?: string; transcriptUrl?: string; file?: File }) => {
     setMeetingMoMLoading(true);
     setMeetingMoMProgress(0);
     setMeetingMoMMessage('Starting...');
@@ -834,8 +834,69 @@ They can review and provide feedback directly in Cliq!`,
             }).catch(fail);
           });
         });
+      } else if (data.type === 'video' && data.file) {
+        // Upload video file via multipart form data
+        const formData = new FormData();
+        formData.append('video', data.file);
+        formData.append('meetingTitle', data.value || 'Uploaded Recording');
+
+        const streamRes = await apiFetch('/api/zoho-meeting/upload', {
+          method: 'POST',
+          credentials: 'include',
+          body: formData,
+        });
+        if (!streamRes.ok) {
+          const err = await streamRes.json().catch(() => ({}));
+          throw new Error((err as any).details || (err as any).error || `Server error ${streamRes.status}`);
+        }
+
+        result = await new Promise<MeetingMoMData>((resolve, reject) => {
+          const decoder = new TextDecoder();
+          const fail = (err: unknown) => reject(err);
+
+          function pumpUploadStream(reader: ReadableStreamDefaultReader<Uint8Array>, onTranscribed?: (transcript: string, meetingTitle: string, verbosity: string) => void) {
+            let buffer = '';
+            function pump() {
+              reader.read().then(({ done, value }) => {
+                if (done) return;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                for (const line of lines) {
+                  if (!line.startsWith('data: ')) continue;
+                  try {
+                    const event = JSON.parse(line.slice(6));
+                    setMeetingMoMProgress(event.progress ?? 0);
+                    setMeetingMoMMessage(event.message ?? '');
+                    if (event.status === 'done') { resolve(event.result); return; }
+                    if (event.status === 'error') { fail(new Error(event.message || 'Processing failed')); return; }
+                    if (event.status === 'transcribed' && onTranscribed) {
+                      reader.cancel();
+                      onTranscribed(event.transcript, event.meetingTitle, event.verbosity);
+                      return;
+                    }
+                  } catch { /* ignore malformed line */ }
+                }
+                pump();
+              }).catch(fail);
+            }
+            pump();
+          }
+
+          pumpUploadStream(streamRes.body!.getReader(), (transcript, title, verbosity) => {
+            apiFetch('/api/zoho-meeting/generate-mom', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ transcript, meetingTitle: title, verbosity }),
+            }).then(momRes => {
+              if (!momRes.ok) { fail(new Error(`MoM generation failed: ${momRes.status}`)); return; }
+              pumpUploadStream(momRes.body!.getReader());
+            }).catch(fail);
+          });
+        });
       } else {
-        throw new Error('Video upload via this form is not yet supported. Use a Zoho recording or meeting link.');
+        throw new Error('Please select a valid input.');
       }
 
       setMeetingMoMData(result);
